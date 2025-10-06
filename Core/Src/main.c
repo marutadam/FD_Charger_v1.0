@@ -51,14 +51,14 @@ UART_HandleTypeDef huart1;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4, // Increased from 128 * 4
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for canTask */
 osThreadId_t canTaskHandle;
 const osThreadAttr_t canTask_attributes = {
   .name = "canTask",
-  .stack_size = 256 * 4,
+  .stack_size = 1024 * 4, // Increased from 256 * 4
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
