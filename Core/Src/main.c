@@ -65,6 +65,7 @@ const osThreadAttr_t canTask_attributes = {
 // Global variables to store settings
 volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
+volatile float battery_voltage = 20.0f;  // Current battery voltage
 
 /* USER CODE END PV */
 
@@ -445,6 +446,9 @@ void CanTaskHandler(void *argument)
   const char* task_start = "CAN Task started (interrupt mode)!\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
   
+  // NOTE: battery_voltage should be updated periodically by reading from ADC or other measurement
+  // For testing, you can set it manually: battery_voltage = 12.5f;
+  
   /* Infinite loop */
   for(;;)
   {
@@ -511,8 +515,8 @@ void CanTaskHandler(void *argument)
                     // Copy command byte
                     txFrame.data[0] = rxFrame.data[0];
                     
-                    // Set acknowledgment flag on data[1]
-                    txFrame.data[1] = 0x01;
+                    // Set acknowledgment flag on data[2] (swapped from data[1])
+                    txFrame.data[2] = 0x01;
                     
                     // Copy voltage value back to data[7]
                     txFrame.data[7] = rxFrame.data[7];
@@ -523,7 +527,7 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "<<< Response sent: [05 01 00 00 00 00 00 F6]\r\n";
+                        const char* resp_msg = "<<< Response sent: [05 00 01 00 00 00 00 F6]\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
                     } else {
                         osDelay(5);
@@ -565,8 +569,8 @@ void CanTaskHandler(void *argument)
                     // Copy command byte
                     txFrame.data[0] = rxFrame.data[0];
                     
-                    // Set acknowledgment flag on data[1]
-                    txFrame.data[1] = 0x01;
+                    // Set acknowledgment flag on data[2] (swapped from data[1])
+                    txFrame.data[2] = 0x01;
                     
                     // Copy current value back to data[7]
                     txFrame.data[7] = rxFrame.data[7];
@@ -577,8 +581,70 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "<<< Response sent: [06 01 00 00 00 00 00 XX]\r\n";
+                        const char* resp_msg = "<<< Response sent: [06 00 01 00 00 00 00 XX]\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
+                    } else {
+                        osDelay(5);
+                        const char* err_msg = "!!! Failed to send response\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                    }
+                }
+                
+                // Handle CMD_IS_BATT_PRESENT
+                if (rxFrame.data[0] == CMD_IS_BATT_PRESENT && rxFrame.dlc == 8) {
+                    // Check if battery is present (voltage > 10.0V)
+                    uint8_t batt_present = (battery_voltage > 10.0f) ? 1 : 0;
+                    
+                    // Log battery status
+                    char batt_buffer[80];
+                    uint16_t voltage_int = (uint16_t)battery_voltage;
+                    uint16_t voltage_dec = (uint16_t)((battery_voltage - voltage_int) * 10);
+                    int batt_len = sprintf(batt_buffer, ">>> Battery Check: %u.%u V - %s\r\n", 
+                                          voltage_int, voltage_dec, 
+                                          batt_present ? "PRESENT" : "NOT PRESENT");
+                    
+                    osDelay(5);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)batt_buffer, batt_len, HAL_MAX_DELAY);
+                    
+                    // Prepare response frame
+                    CAN_Frame txFrame;
+                    txFrame.id = 0x72;
+                    txFrame.extended = 0;
+                    txFrame.rtr = 0;
+                    txFrame.dlc = 8;
+                    
+                    // Initialize all data bytes to zero
+                    for (uint8_t i = 0; i < 8; i++) {
+                        txFrame.data[i] = 0x00;
+                    }
+                    
+                    // Copy command byte
+                    txFrame.data[0] = rxFrame.data[0];
+                    
+                    // Set battery present flag on data[7] (last byte)
+                    txFrame.data[7] = batt_present;
+                    
+                    // Small delay before CAN transmit
+                    osDelay(5);
+                    
+                    // Send CAN response
+                    if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
+                        osDelay(5);
+                        char resp_buffer[60];
+                        int resp_len = sprintf(resp_buffer, "<<< Response sent: [07 00 00 00 00 00 00 %02X]\r\n", 
+                                              batt_present);
+                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
+                        
+                        // FOR TESTING: Toggle battery_voltage between 0V and 20V
+                        if (battery_voltage > 10.0f) {
+                            battery_voltage = 0.0f;
+                            const char* test_msg = "*** Test: Battery voltage changed to 0.0V\r\n";
+                            HAL_UART_Transmit(&huart1, (uint8_t*)test_msg, strlen(test_msg), HAL_MAX_DELAY);
+                        } else {
+                            battery_voltage = 20.0f;
+                            const char* test_msg = "*** Test: Battery voltage changed to 20.0V\r\n";
+                            HAL_UART_Transmit(&huart1, (uint8_t*)test_msg, strlen(test_msg), HAL_MAX_DELAY);
+                        }
                     } else {
                         osDelay(5);
                         const char* err_msg = "!!! Failed to send response\r\n";
