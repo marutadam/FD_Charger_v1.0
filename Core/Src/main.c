@@ -62,8 +62,9 @@ const osThreadAttr_t canTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-// Global variable to store end voltage setting
+// Global variables to store settings
 volatile float end_voltage = 0.0f;
+volatile float set_current = 0.0f;
 
 /* USER CODE END PV */
 
@@ -523,6 +524,60 @@ void CanTaskHandler(void *argument)
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
                         const char* resp_msg = "<<< Response sent: [05 01 00 00 00 00 00 F6]\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
+                    } else {
+                        osDelay(5);
+                        const char* err_msg = "!!! Failed to send response\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                    }
+                }
+                
+                // Handle CMD_SET_CURRENT
+                if (rxFrame.data[0] == CMD_SET_CURRENT && rxFrame.dlc == 8) {
+                    // Parse current value from data[7] (last byte) (e.g., 0x32 = 50 = 5.0A)
+                    uint8_t current_raw = rxFrame.data[7];
+                    set_current = (float)current_raw / 10.0f;
+                    
+                    // Log the current (avoid float printf, use integer math)
+                    uint16_t current_int = current_raw / 10;      // Integer part (5)
+                    uint16_t current_dec = current_raw % 10;      // Decimal part (0)
+                    
+                    char curr_buffer[60];
+                    int curr_len = sprintf(curr_buffer, ">>> Set Current: %u.%u A (raw=0x%02X)\r\n", 
+                                          current_int, current_dec, current_raw);
+                    
+                    // Small delay before UART transmit
+                    osDelay(5);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)curr_buffer, curr_len, HAL_MAX_DELAY);
+                    
+                    // Prepare response frame (copy original message, set flag on data[1])
+                    CAN_Frame txFrame;
+                    txFrame.id = 0x72;
+                    txFrame.extended = 0;
+                    txFrame.rtr = 0;
+                    txFrame.dlc = 8;
+                    
+                    // Initialize all data bytes to zero first
+                    for (uint8_t i = 0; i < 8; i++) {
+                        txFrame.data[i] = 0x00;
+                    }
+                    
+                    // Copy command byte
+                    txFrame.data[0] = rxFrame.data[0];
+                    
+                    // Set acknowledgment flag on data[1]
+                    txFrame.data[1] = 0x01;
+                    
+                    // Copy current value back to data[7]
+                    txFrame.data[7] = rxFrame.data[7];
+                    
+                    // Small delay before CAN transmit
+                    osDelay(5);
+                    
+                    // Send CAN response
+                    if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
+                        osDelay(5);
+                        const char* resp_msg = "<<< Response sent: [06 01 00 00 00 00 00 XX]\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
                     } else {
                         osDelay(5);
