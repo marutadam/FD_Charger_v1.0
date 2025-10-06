@@ -62,6 +62,8 @@ const osThreadAttr_t canTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+// Global variable to store end voltage setting
+volatile float end_voltage = 0.0f;
 
 /* USER CODE END PV */
 
@@ -369,6 +371,28 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /**
+  * @brief  Get command name string from command code
+  * @param  cmd_code: Command code byte (data[0])
+  * @retval Pointer to command name string
+  */
+const char* CAN_GetCommandName(uint8_t cmd_code) {
+    switch(cmd_code) {
+        case CMD_CHECK:                 return "CMD_CHECK";
+        case CMD_START:                 return "CMD_START";
+        case CMD_STOP:                  return "CMD_STOP";
+        case CMD_RESET:                 return "CMD_RESET";
+        case CMD_SET_END_VOLTAGE:       return "CMD_SET_END_VOLTAGE";
+        case CMD_SET_CURRENT:           return "CMD_SET_CURRENT";
+        case CMD_IS_BATT_PRESENT:       return "CMD_IS_BATT_PRESENT";
+        case CMD_READ_CURRENT_VOLTAGE:  return "CMD_READ_CURRENT_VOLTAGE";
+        case CMD_READ_CURRENT_CURRENT:  return "CMD_READ_CURRENT_CURRENT";
+        case CMD_READ_CURRENT_MAH:      return "CMD_READ_CURRENT_MAH";
+        case CMD_READ_CURRENT_POWER:    return "CMD_READ_CURRENT_POWER";
+        default:                        return "CMD_UNKNOWN";
+    }
+}
+
+/**
   * @brief  EXTI line detection callback
   * @param  GPIO_Pin: Specifies the pins connected EXTI line
   * @retval None
@@ -430,36 +454,105 @@ void CanTaskHandler(void *argument)
     // Process all available CAN messages
     while (MCP2515_CheckReceive(&hspi1)) {
         // Read CAN message
-          const char* task_start = "CAN Task Checked!\r\n";
-  HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
         if (MCP2515_ReadMessage(&hspi1, &rxFrame) == MCP2515_OK) {
             // Toggle LED to indicate message received
             HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
             
-            // Format message for UART
-            int len = sprintf(uart_buffer, "CAN ID: 0x%03lX | DLC: %d | Data: ", 
-                            (unsigned long)rxFrame.id, rxFrame.dlc);
-            
-            // Add data bytes
-            for (uint8_t i = 0; i < rxFrame.dlc && i < 8; i++) {
-                len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
-            }
-            
-            // Add frame type info
-            if (rxFrame.extended) {
-                len += sprintf(uart_buffer + len, "| EXT");
+            // Check if this is our command ID (0x72)
+            if (rxFrame.id == 0x72 && !rxFrame.extended) {
+                // Parse and display command
+                const char* cmd_name = CAN_GetCommandName(rxFrame.data[0]);
+                
+                // Format message for UART with command name
+                int len = sprintf(uart_buffer, "[0x%02X] %s | Data: ", 
+                                rxFrame.data[0], cmd_name);
+                
+                // Add all data bytes
+                for (uint8_t i = 1; i < rxFrame.dlc && i < 8; i++) {
+                    len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
+                }
+                
+                len += sprintf(uart_buffer + len, "\r\n");
+                
+                // Send to UART
+                HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
+                
+                // Handle CMD_SET_END_VOLTAGE
+                if (rxFrame.data[0] == CMD_SET_END_VOLTAGE && rxFrame.dlc == 8) {
+                    // Parse voltage value from data[7] (last byte) (e.g., 0xF6 = 246 = 24.6V)
+                    uint8_t voltage_raw = rxFrame.data[7];
+                    end_voltage = (float)voltage_raw / 10.0f;
+                    
+                    // Log the voltage (avoid float printf, use integer math)
+                    uint16_t voltage_int = voltage_raw / 10;      // Integer part (24)
+                    uint16_t voltage_dec = voltage_raw % 10;      // Decimal part (6)
+                    
+                    char volt_buffer[60];
+                    int volt_len = sprintf(volt_buffer, ">>> End Voltage Set: %u.%u V (raw=0x%02X)\r\n", 
+                                          voltage_int, voltage_dec, voltage_raw);
+                    
+                    // Small delay before UART transmit
+                    osDelay(5);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)volt_buffer, volt_len, HAL_MAX_DELAY);
+                    
+                    // Prepare response frame (copy original message, set flag on data[1])
+                    CAN_Frame txFrame;
+                    txFrame.id = 0x72;
+                    txFrame.extended = 0;
+                    txFrame.rtr = 0;
+                    txFrame.dlc = 8;
+                    
+                    // Initialize all data bytes to zero first
+                    for (uint8_t i = 0; i < 8; i++) {
+                        txFrame.data[i] = 0x00;
+                    }
+                    
+                    // Copy command byte
+                    txFrame.data[0] = rxFrame.data[0];
+                    
+                    // Set acknowledgment flag on data[1]
+                    txFrame.data[1] = 0x01;
+                    
+                    // Copy voltage value back to data[7]
+                    txFrame.data[7] = rxFrame.data[7];
+                    
+                    // Small delay before CAN transmit
+                    osDelay(5);
+                    
+                    // Send CAN response
+                    if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
+                        osDelay(5);
+                        const char* resp_msg = "<<< Response sent: [05 01 00 00 00 00 00 F6]\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
+                    } else {
+                        osDelay(5);
+                        const char* err_msg = "!!! Failed to send response\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                    }
+                }
             } else {
-                len += sprintf(uart_buffer + len, "| STD");
+                // Different ID - just print basic CAN frame info
+                int len = sprintf(uart_buffer, "CAN ID: 0x%03lX | DLC: %d | Data: ", 
+                                (unsigned long)rxFrame.id, rxFrame.dlc);
+                
+                // Add all data bytes
+                for (uint8_t i = 0; i < rxFrame.dlc && i < 8; i++) {
+                    len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
+                }
+                
+                // Add frame type if needed
+                if (rxFrame.extended) {
+                    len += sprintf(uart_buffer + len, "| EXT");
+                }
+                if (rxFrame.rtr) {
+                    len += sprintf(uart_buffer + len, " RTR");
+                }
+                
+                len += sprintf(uart_buffer + len, "\r\n");
+                
+                // Send to UART
+                HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
             }
-            
-            if (rxFrame.rtr) {
-                len += sprintf(uart_buffer + len, " RTR");
-            }
-            
-            len += sprintf(uart_buffer + len, "\r\n");
-            
-            // Send to UART
-            HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
         }
     }
     

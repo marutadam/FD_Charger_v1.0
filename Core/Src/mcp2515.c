@@ -156,11 +156,12 @@ MCP2515_ERROR MCP2515_Init(SPI_HandleTypeDef *hspi, CAN_SPEED speed) {
     // Enable interrupts for RX buffers
     MCP2515_WriteRegister(hspi, MCP2515_CANINTE, MCP2515_RX0IF | MCP2515_RX1IF);
     
-    // Configure RX buffer 0
-    MCP2515_WriteRegister(hspi, MCP2515_RXB0CTRL, 0x60); // Receive all messages
+    // DISABLE FILTERS - Accept ALL CAN messages (for debugging)
+    // Configure RX buffer 0 - Receive all messages (turn off filters)
+    MCP2515_WriteRegister(hspi, MCP2515_RXB0CTRL, 0x60); // 0x60 = receive all valid messages
     
-    // Configure RX buffer 1
-    MCP2515_WriteRegister(hspi, MCP2515_RXB1CTRL, 0x60); // Receive all messages
+    // Configure RX buffer 1 - Receive all messages (turn off filters)
+    MCP2515_WriteRegister(hspi, MCP2515_RXB1CTRL, 0x60); // 0x60 = receive all valid messages
     
     // Set normal mode
     if (MCP2515_SetMode(hspi, MCP2515_MODE_NORMAL) != MCP2515_OK) {

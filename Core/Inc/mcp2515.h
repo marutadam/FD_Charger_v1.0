@@ -59,6 +59,28 @@ extern "C" {
 #define MCP2515_RXB1DLC         0x75
 #define MCP2515_RXB1DATA        0x76
 
+/* Acceptance Filter and Mask Registers */
+#define MCP2515_RXF0SIDH        0x00
+#define MCP2515_RXF0SIDL        0x01
+#define MCP2515_RXF0EID8        0x02
+#define MCP2515_RXF0EID0        0x03
+#define MCP2515_RXF1SIDH        0x04
+#define MCP2515_RXF1SIDL        0x05
+#define MCP2515_RXF1EID8        0x06
+#define MCP2515_RXF1EID0        0x07
+#define MCP2515_RXF2SIDH        0x08
+#define MCP2515_RXF2SIDL        0x09
+#define MCP2515_RXF2EID8        0x0A
+#define MCP2515_RXF2EID0        0x0B
+#define MCP2515_RXM0SIDH        0x20
+#define MCP2515_RXM0SIDL        0x21
+#define MCP2515_RXM0EID8        0x22
+#define MCP2515_RXM0EID0        0x23
+#define MCP2515_RXM1SIDH        0x24
+#define MCP2515_RXM1SIDL        0x25
+#define MCP2515_RXM1EID8        0x26
+#define MCP2515_RXM1EID0        0x27
+
 /* TX Buffer 0 */
 #define MCP2515_TXB0CTRL        0x30
 #define MCP2515_TXB0SIDH        0x31
@@ -114,6 +136,22 @@ typedef enum {
     MCP2515_ALLTXBUSY,
     MCP2515_NOMSG
 } MCP2515_ERROR;
+
+/* CAN Command Codes (data[0] byte for ID 0x72) */
+typedef enum {
+    CMD_CHECK = 0x01,
+    CMD_START = 0x02,
+    CMD_STOP = 0x03,
+    CMD_RESET = 0x04,
+    CMD_SET_END_VOLTAGE = 0x05,
+    CMD_SET_CURRENT = 0x06,
+    CMD_IS_BATT_PRESENT = 0x07,
+    CMD_READ_CURRENT_VOLTAGE = 0x08,
+    CMD_READ_CURRENT_CURRENT = 0x09,
+    CMD_READ_CURRENT_MAH = 0x0A,
+    CMD_READ_CURRENT_POWER = 0x0B,
+    CMD_UNKNOWN = 0xFF
+} CAN_COMMAND;
 
 /* Function Prototypes */
 MCP2515_ERROR MCP2515_Init(SPI_HandleTypeDef *hspi, CAN_SPEED speed);
