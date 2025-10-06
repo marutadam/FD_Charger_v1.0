@@ -66,6 +66,7 @@ const osThreadAttr_t canTask_attributes = {
 volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
 volatile float battery_voltage = 20.0f;  // Current battery voltage
+volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
 
 /* USER CODE END PV */
 
@@ -645,6 +646,76 @@ void CanTaskHandler(void *argument)
                             const char* test_msg = "*** Test: Battery voltage changed to 20.0V\r\n";
                             HAL_UART_Transmit(&huart1, (uint8_t*)test_msg, strlen(test_msg), HAL_MAX_DELAY);
                         }
+                    } else {
+                        osDelay(5);
+                        const char* err_msg = "!!! Failed to send response\r\n";
+                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                    }
+                }
+                
+                // Handle CMD_READ_CURRENT_VOLTAGE
+                if (rxFrame.data[0] == CMD_READ_CURRENT_VOLTAGE && rxFrame.dlc == 8) {
+                    // Prepare response frame with cell voltages and battery voltage
+                    CAN_Frame txFrame;
+                    txFrame.id = 0x72;
+                    txFrame.extended = 0;
+                    txFrame.rtr = 0;
+                    txFrame.dlc = 8;
+                    
+                    // Initialize all data bytes
+                    txFrame.data[0] = rxFrame.data[0];  // Command byte
+                    txFrame.data[1] = 0x00;             // Reserved
+                    
+                    // Encode cell voltages 1-6 in bytes 2-7
+                    // Formula: byte_value = (voltage - 1.80) / 0.01
+                    for (uint8_t i = 0; i < 6; i++) {
+                        float cell_v = cell_voltages[i];
+                        uint8_t encoded = (uint8_t)((cell_v - 1.80f) / 0.01f);
+                        txFrame.data[1 + i] = encoded;
+                    }
+                    
+                    // Encode battery voltage in byte 8 (data[7])
+                    // Using same formula: byte_value = (voltage - 1.80) / 0.01
+                    uint8_t batt_encoded = (uint8_t)((battery_voltage ) / 0.1f);
+                    // Note: For 20V battery, this will overflow (175.0 > 255), so capping at 255
+                    if (battery_voltage > 25.5f) {
+                        batt_encoded = 255;  // Max value
+                    }
+                    txFrame.data[7] = batt_encoded;
+                    
+                    // Log the voltages using integer math (avoid float printf)
+                    char volt_buffer[200];
+                    
+                    // Convert cell voltages to integer parts
+                    uint16_t c1_mv = (uint16_t)(cell_voltages[0] * 1000);
+                    uint16_t c2_mv = (uint16_t)(cell_voltages[1] * 1000);
+                    uint16_t c3_mv = (uint16_t)(cell_voltages[2] * 1000);
+                    uint16_t c4_mv = (uint16_t)(cell_voltages[3] * 1000);
+                    uint16_t c5_mv = (uint16_t)(cell_voltages[4] * 1000);
+                    uint16_t c6_mv = (uint16_t)(cell_voltages[5] * 1000);
+                    uint16_t batt_mv = (uint16_t)(battery_voltage * 1000);
+                    
+                    int volt_len = sprintf(volt_buffer, 
+                        ">>> Cell Voltages: C1=%u.%03uV C2=%u.%03uV C3=%u.%03uV C4=%u.%03uV C5=%u.%03uV C6=%u.%03uV | Batt=%u.%03uV\r\n",
+                        c1_mv/1000, c1_mv%1000, c2_mv/1000, c2_mv%1000, c3_mv/1000, c3_mv%1000,
+                        c4_mv/1000, c4_mv%1000, c5_mv/1000, c5_mv%1000, c6_mv/1000, c6_mv%1000,
+                        batt_mv/1000, batt_mv%1000);
+                    
+                    osDelay(5);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)volt_buffer, volt_len, HAL_MAX_DELAY);
+                    
+                    // Small delay before CAN transmit
+                    osDelay(5);
+                    
+                    // Send CAN response
+                    if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
+                        osDelay(5);
+                        char resp_buffer[80];
+                        int resp_len = sprintf(resp_buffer, 
+                            "<<< Response sent: [08 00 %02X %02X %02X %02X %02X %02X]\r\n",
+                            txFrame.data[2], txFrame.data[3], txFrame.data[4], 
+                            txFrame.data[5], txFrame.data[6], txFrame.data[7]);
+                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
                     } else {
                         osDelay(5);
                         const char* err_msg = "!!! Failed to send response\r\n";
