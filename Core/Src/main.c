@@ -147,35 +147,42 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+
+  // Read CAN ID from flash on startup
+  uint8_t can_id = Flash_Read_CAN_ID();
+  char canid_msg[64];
+  sprintf(canid_msg, "Startup CAN_ID from flash: 0x%02X\r\n", can_id);
+  HAL_UART_Transmit(&huart1, (uint8_t*)canid_msg, strlen(canid_msg), HAL_MAX_DELAY);
+
   // Initialize MCP2515 with 125kbps CAN speed
   const char* init_msg = "Initializing MCP2515 at 125kbps...\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)init_msg, strlen(init_msg), HAL_MAX_DELAY);
-  
+
   // Add small delay for MCP2515 power-up
   HAL_Delay(100);
-  
+
   MCP2515_ERROR result = MCP2515_Init(&hspi1, CAN_125KBPS);
-  
+
   if (result == MCP2515_OK) {
-      const char* success_msg = "MCP2515 initialized successfully!\r\n";
-      HAL_UART_Transmit(&huart1, (uint8_t*)success_msg, strlen(success_msg), HAL_MAX_DELAY);
+    const char* success_msg = "MCP2515 initialized successfully!\r\n";
+    HAL_UART_Transmit(&huart1, (uint8_t*)success_msg, strlen(success_msg), HAL_MAX_DELAY);
   } else {
-      char error_msg[100];
-      sprintf(error_msg, "MCP2515 initialization failed! Error: %d\r\n", result);
-      HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
-      
-      // Try to read a register to test SPI communication
-      HAL_Delay(10);
-      uint8_t test_read = MCP2515_ReadRegister(&hspi1, MCP2515_CANSTAT);
-      sprintf(error_msg, "CANSTAT register read: 0x%02X\r\n", test_read);
-      HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
-      
-      // Continue anyway to allow debugging
+    char error_msg[100];
+    sprintf(error_msg, "MCP2515 initialization failed! Error: %d\r\n", result);
+    HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
+
+    // Try to read a register to test SPI communication
+    HAL_Delay(10);
+    uint8_t test_read = MCP2515_ReadRegister(&hspi1, MCP2515_CANSTAT);
+    sprintf(error_msg, "CANSTAT register read: 0x%02X\r\n", test_read);
+    HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
+
+    // Continue anyway to allow debugging
   }
-  
+
   const char* ready_msg = "Ready to receive CAN messages...\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)ready_msg, strlen(ready_msg), HAL_MAX_DELAY);
-  
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -706,6 +713,43 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// 💾 Zapis wartości (0x71–0x76)
+void Flash_Save_CAN_ID(uint8_t id)
+{
+  HAL_FLASH_Unlock();
+
+  // Flash można tylko kasować sektorami, więc przed zapisem kasujemy 1 sektor
+  FLASH_EraseInitTypeDef eraseInit;
+  uint32_t sectorError;
+
+  eraseInit.TypeErase = FLASH_TYPEERASE_SECTORS;
+  eraseInit.Sector = FLASH_SECTOR_7;           // ostatni sektor
+  eraseInit.NbSectors = 1;
+  eraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+  if (HAL_FLASHEx_Erase(&eraseInit, &sectorError) != HAL_OK) {
+    HAL_FLASH_Lock();
+    return;
+  }
+
+  // zapisujemy 1 bajt jako słowo (bo Flash zapisuje słowami)
+  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_ADDR_CAN_ID, id);
+
+  HAL_FLASH_Lock();
+}
+
+// 🔍 Odczyt wartości z Flash
+uint8_t Flash_Read_CAN_ID(void)
+{
+  uint8_t id = *(uint8_t*)FLASH_ADDR_CAN_ID;
+
+  // jeśli Flash czysty → 0xFF
+  if (id < 0x71 || id > 0x76)
+    id = 0x71;  // domyślny adres
+
+  return id;
+}
+
 
 /**
   * @brief  EXTI line detection callback
@@ -735,9 +779,10 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
-  for(;;)
+   for(;;)
   {
-    osDelay(1);
+    osDelay(1); // Adjust as needed
+
   }
   /* USER CODE END 5 */
 }
@@ -756,7 +801,7 @@ void CanTaskHandler(void *argument)
   char uart_buffer[100];
   
   // Send startup message
-  const char* task_start = "CAN Task started (interrupt mode)!\r\n";
+  const char* task_start = "[CAN] Task started\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
   
   
@@ -766,8 +811,6 @@ void CanTaskHandler(void *argument)
 
     // Wait for notification from ISR (blocking, efficient)
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    const char* task_start = "CAN interrupt!\r\n";
-  HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
     // Process all available CAN messages
     while (MCP2515_CheckReceive(&hspi1)) {
         // Read CAN message
@@ -805,7 +848,7 @@ void CanTaskHandler(void *argument)
                     uint16_t voltage_dec = voltage_raw % 10;      // Decimal part (6)
                     
                     char volt_buffer[60];
-                    int volt_len = sprintf(volt_buffer, ">>> End Voltage Set: %u.%u V (raw=0x%02X)\r\n", 
+                    int volt_len = sprintf(volt_buffer, "[INFO] End Voltage Set: %u.%u V (raw=0x%02X)\r\n", 
                                           voltage_int, voltage_dec, voltage_raw);
                     
                     // Small delay before UART transmit
@@ -839,11 +882,11 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "<<< Response sent: [05 00 01 00 00 00 00 F6]\r\n";
+                        const char* resp_msg = "[INFO] Response sent: [05 00 01 00 00 00 00 F6]\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
                     } else {
                         osDelay(5);
-                        const char* err_msg = "!!! Failed to send response\r\n";
+                        const char* err_msg = "[WARN] Failed to send response\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
                     }
                 }
@@ -859,13 +902,13 @@ void CanTaskHandler(void *argument)
                     uint16_t current_dec = current_raw % 10;      // Decimal part (0)
                     
                     char curr_buffer[60];
-                    int curr_len = sprintf(curr_buffer, ">>> Set Current: %u.%u A (raw=0x%02X)\r\n", 
+                    int curr_len = sprintf(curr_buffer, "[INFO] Set Current: %u.%u A (raw=0x%02X)\r\n", 
                                           current_int, current_dec, current_raw);
                     
                     // Small delay before UART transmit
                     osDelay(5);
                     HAL_UART_Transmit(&huart1, (uint8_t*)curr_buffer, curr_len, HAL_MAX_DELAY);
-                    
+
                     // Prepare response frame (copy original message, set flag on data[1])
                     CAN_Frame txFrame;
                     txFrame.id = CAN_ID;
@@ -893,11 +936,11 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "<<< Response sent: [06 00 01 00 00 00 00 XX]\r\n";
+                        const char* resp_msg = "[INFO] Response sent: [06 00 01 00 00 00 00 XX]\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
                     } else {
                         osDelay(5);
-                        const char* err_msg = "!!! Failed to send response\r\n";
+                        const char* err_msg = "[WARN] Failed to send response\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
                     }
                 }
@@ -911,7 +954,7 @@ void CanTaskHandler(void *argument)
                     char batt_buffer[80];
                     uint16_t voltage_int = (uint16_t)battery_voltage;
                     uint16_t voltage_dec = (uint16_t)((battery_voltage - voltage_int) * 10);
-                    int batt_len = sprintf(batt_buffer, ">>> Battery Check: %u.%u V - %s\r\n", 
+                    int batt_len = sprintf(batt_buffer, "[INFO] Battery Check: %u.%u V - %s\r\n", 
                                           voltage_int, voltage_dec, 
                                           batt_present ? "PRESENT" : "NOT PRESENT");
                     
@@ -943,7 +986,7 @@ void CanTaskHandler(void *argument)
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
                         char resp_buffer[60];
-                        int resp_len = sprintf(resp_buffer, "<<< Response sent: [07 00 00 00 00 00 00 %02X]\r\n", 
+                        int resp_len = sprintf(resp_buffer, "[INFO] Response sent: [07 00 00 00 00 00 00 %02X]\r\n", 
                                               batt_present);
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
                         
@@ -959,7 +1002,7 @@ void CanTaskHandler(void *argument)
                         }
                     } else {
                         osDelay(5);
-                        const char* err_msg = "!!! Failed to send response\r\n";
+                        const char* err_msg = "[WARN] Failed to send response\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
                     }
                 }
@@ -988,7 +1031,6 @@ void CanTaskHandler(void *argument)
                     // Encode battery voltage in byte 8 (data[7])
                     // Using same formula: byte_value = (voltage - 1.80) / 0.01
                     uint8_t batt_encoded = (uint8_t)((battery_voltage ) / 0.1f);
-                    // Note: For 20V battery, this will overflow (175.0 > 255), so capping at 255
                     if (battery_voltage > 25.5f) {
                         batt_encoded = 255;  // Max value
                     }
@@ -1023,7 +1065,7 @@ void CanTaskHandler(void *argument)
                         osDelay(5);
                         char resp_buffer[80];
                         int resp_len = sprintf(resp_buffer, 
-                            "<<< Response sent: [08 00 %02X %02X %02X %02X %02X %02X]\r\n",
+                            "[INFO] Response sent: [08 00 %02X %02X %02X %02X %02X %02X]\r\n",
                             txFrame.data[2], txFrame.data[3], txFrame.data[4], 
                             txFrame.data[5], txFrame.data[6], txFrame.data[7]);
                         HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
