@@ -25,6 +25,7 @@
 #include "mcp2515.h"
 #include <stdio.h>
 #include <string.h>
+#include "commands.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,8 +35,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#define CAN_ID 0x71
 
 /* USER CODE END PD */
 
@@ -707,27 +706,6 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-/**
-  * @brief  Get command name string from command code
-  * @param  cmd_code: Command code byte (data[0])
-  * @retval Pointer to command name string
-  */
-const char* CAN_GetCommandName(uint8_t cmd_code) {
-    switch(cmd_code) {
-        case CMD_CHECK:                 return "CMD_CHECK";
-        case CMD_START:                 return "CMD_START";
-        case CMD_STOP:                  return "CMD_STOP";
-        case CMD_RESET:                 return "CMD_RESET";
-        case CMD_SET_END_VOLTAGE:       return "CMD_SET_END_VOLTAGE";
-        case CMD_SET_CURRENT:           return "CMD_SET_CURRENT";
-        case CMD_IS_BATT_PRESENT:       return "CMD_IS_BATT_PRESENT";
-        case CMD_READ_CURRENT_VOLTAGE:  return "CMD_READ_CURRENT_VOLTAGE";
-        case CMD_READ_CURRENT_CURRENT:  return "CMD_READ_CURRENT_CURRENT";
-        case CMD_READ_CURRENT_MAH:      return "CMD_READ_CURRENT_MAH";
-        case CMD_READ_CURRENT_POWER:    return "CMD_READ_CURRENT_POWER";
-        default:                        return "CMD_UNKNOWN";
-    }
-}
 
 /**
   * @brief  EXTI line detection callback
@@ -836,7 +814,7 @@ void CanTaskHandler(void *argument)
                     
                     // Prepare response frame (copy original message, set flag on data[1])
                     CAN_Frame txFrame;
-                    txFrame.id = 0x72;
+                    txFrame.id = CAN_ID;
                     txFrame.extended = 0;
                     txFrame.rtr = 0;
                     txFrame.dlc = 8;
@@ -890,7 +868,7 @@ void CanTaskHandler(void *argument)
                     
                     // Prepare response frame (copy original message, set flag on data[1])
                     CAN_Frame txFrame;
-                    txFrame.id = 0x72;
+                    txFrame.id = CAN_ID;
                     txFrame.extended = 0;
                     txFrame.rtr = 0;
                     txFrame.dlc = 8;
@@ -942,7 +920,7 @@ void CanTaskHandler(void *argument)
                     
                     // Prepare response frame
                     CAN_Frame txFrame;
-                    txFrame.id = 0x72;
+                    txFrame.id = CAN_ID;
                     txFrame.extended = 0;
                     txFrame.rtr = 0;
                     txFrame.dlc = 8;
@@ -990,7 +968,7 @@ void CanTaskHandler(void *argument)
                 if (rxFrame.data[0] == CMD_READ_CURRENT_VOLTAGE && rxFrame.dlc == 8) {
                     // Prepare response frame with cell voltages and battery voltage
                     CAN_Frame txFrame;
-                    txFrame.id = 0x72;
+                    txFrame.id = CAN_ID;
                     txFrame.extended = 0;
                     txFrame.rtr = 0;
                     txFrame.dlc = 8;
