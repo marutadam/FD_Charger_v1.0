@@ -56,10 +56,10 @@ TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
+/* Definitions for uartTask */
+osThreadId_t uartTaskHandle;
+const osThreadAttr_t uartTask_attributes = {
+  .name = "uartTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -74,8 +74,15 @@ const osThreadAttr_t canTask_attributes = {
 osThreadId_t chargerTaskHandle;
 const osThreadAttr_t chargerTask_attributes = {
   .name = "chargerTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for adcTask */
+osThreadId_t adcTaskHandle;
+const osThreadAttr_t adcTask_attributes = {
+  .name = "adcTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
 // Global variables to store settings
@@ -96,9 +103,10 @@ static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
-void StartDefaultTask(void *argument);
+void UartTask(void *argument);
 void CanTaskHandler(void *argument);
 void ChargerTaskHandler(void *argument);
+void AdcTaskHandler(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -205,14 +213,17 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  /* creation of uartTask */
+  uartTaskHandle = osThreadNew(UartTask, NULL, &uartTask_attributes);
 
   /* creation of canTask */
   canTaskHandle = osThreadNew(CanTaskHandler, NULL, &canTask_attributes);
 
   /* creation of chargerTask */
   chargerTaskHandle = osThreadNew(ChargerTaskHandler, NULL, &chargerTask_attributes);
+
+  /* creation of adcTask */
+  adcTaskHandle = osThreadNew(AdcTaskHandler, NULL, &adcTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -768,14 +779,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_UartTask */
 /**
-  * @brief  Function implementing the defaultTask thread.
+  * @brief  Function implementing the uartTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
+/* USER CODE END Header_UartTask */
+void UartTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
@@ -1133,6 +1144,24 @@ void ChargerTaskHandler(void *argument)
     osDelay(1);
   }
   /* USER CODE END ChargerTaskHandler */
+}
+
+/* USER CODE BEGIN Header_AdcTaskHandler */
+/**
+* @brief Function implementing the adcTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_AdcTaskHandler */
+void AdcTaskHandler(void *argument)
+{
+  /* USER CODE BEGIN AdcTaskHandler */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END AdcTaskHandler */
 }
 
 /**
