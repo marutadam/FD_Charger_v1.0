@@ -93,7 +93,7 @@ void Error_Handler(void);
 #define CELL6_PWM_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+#define FLASH_ADDR_CAN_ID  0x0807FFF0
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
