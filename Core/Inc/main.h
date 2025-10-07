@@ -75,6 +75,12 @@ void Error_Handler(void);
 #define CELL1_PWM_GPIO_Port GPIOB
 #define CELL2_PWM_Pin GPIO_PIN_1
 #define CELL2_PWM_GPIO_Port GPIOB
+#define A_Pin GPIO_PIN_12
+#define A_GPIO_Port GPIOB
+#define B_Pin GPIO_PIN_13
+#define B_GPIO_Port GPIOB
+#define C_Pin GPIO_PIN_14
+#define C_GPIO_Port GPIOB
 #define CELL3_PWM_Pin GPIO_PIN_4
 #define CELL3_PWM_GPIO_Port GPIOB
 #define CELL4_PWM_Pin GPIO_PIN_5
