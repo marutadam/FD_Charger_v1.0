@@ -69,6 +69,13 @@ const osThreadAttr_t canTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for chargerTask */
+osThreadId_t chargerTaskHandle;
+const osThreadAttr_t chargerTask_attributes = {
+  .name = "chargerTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* USER CODE BEGIN PV */
 // Global variables to store settings
 volatile float end_voltage = 0.0f;
@@ -90,6 +97,7 @@ static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 void StartDefaultTask(void *argument);
 void CanTaskHandler(void *argument);
+void ChargerTaskHandler(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -137,7 +145,7 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   // Initialize MCP2515 with 125kbps CAN speed
   const char* init_msg = "Initializing MCP2515 at 125kbps...\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)init_msg, strlen(init_msg), HAL_MAX_DELAY);
@@ -194,6 +202,9 @@ int main(void)
 
   /* creation of canTask */
   canTaskHandle = osThreadNew(CanTaskHandler, NULL, &canTask_attributes);
+
+  /* creation of chargerTask */
+  chargerTaskHandle = osThreadNew(ChargerTaskHandler, NULL, &chargerTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -542,6 +553,7 @@ static void MX_TIM4_Init(void)
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
+    
     Error_Handler();
   }
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
@@ -1045,6 +1057,24 @@ void CanTaskHandler(void *argument)
   /* USER CODE END CanTaskHandler */
 }
 
+/* USER CODE BEGIN Header_ChargerTaskHandler */
+/**
+* @brief Function implementing the chargerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ChargerTaskHandler */
+void ChargerTaskHandler(void *argument)
+{
+  /* USER CODE BEGIN ChargerTaskHandler */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END ChargerTaskHandler */
+}
+
 /**
   * @brief  Period elapsed callback in non blocking mode
   * @note   This function is called  when TIM1 interrupt took place, inside
@@ -1075,6 +1105,9 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  char uart_buffer[100];
+  int len = sprintf(uart_buffer, "PWM Error!\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
   __disable_irq();
   while (1)
   {
