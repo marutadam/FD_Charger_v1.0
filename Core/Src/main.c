@@ -35,6 +35,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define CAN_ID 0x71
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -647,7 +649,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, BUILTIN_LED_Pin|LED_WS2812C_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
@@ -655,12 +657,12 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, A_Pin|B_Pin|C_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : BUILTIN_LED_Pin */
-  GPIO_InitStruct.Pin = BUILTIN_LED_Pin;
+  /*Configure GPIO pins : BUILTIN_LED_Pin LED_WS2812C_Pin */
+  GPIO_InitStruct.Pin = BUILTIN_LED_Pin|LED_WS2812C_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(BUILTIN_LED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CAN_PROG_BTN_Pin */
   GPIO_InitStruct.Pin = CAN_PROG_BTN_Pin;
@@ -792,30 +794,30 @@ void CanTaskHandler(void *argument)
     while (MCP2515_CheckReceive(&hspi1)) {
         // Read CAN message
         if (MCP2515_ReadMessage(&hspi1, &rxFrame) == MCP2515_OK) {
-            // Toggle LED to indicate message received
-            HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-            
-            // Check if this is our command ID (0x72)
-            if (rxFrame.id == 0x72 && !rxFrame.extended) {
-                // Parse and display command
-                const char* cmd_name = CAN_GetCommandName(rxFrame.data[0]);
-                
-                // Format message for UART with command name
-                int len = sprintf(uart_buffer, "[0x%02X] %s | Data: ", 
-                                rxFrame.data[0], cmd_name);
-                
-                // Add all data bytes
-                for (uint8_t i = 1; i < rxFrame.dlc && i < 8; i++) {
-                    len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
-                }
-                
-                len += sprintf(uart_buffer + len, "\r\n");
-                
-                // Send to UART
-                HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
-                
-                // Handle CMD_SET_END_VOLTAGE
-                if (rxFrame.data[0] == CMD_SET_END_VOLTAGE && rxFrame.dlc == 8) {
+      // Toggle LED to indicate message received
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+
+      // Accept command messages on 0x70 and CAN_ID
+      if ((rxFrame.id == 0x70 || rxFrame.id == CAN_ID) && !rxFrame.extended) {
+        // Parse and display command
+        const char* cmd_name = CAN_GetCommandName(rxFrame.data[0]);
+
+        // Format message for UART with command name
+        int len = sprintf(uart_buffer, "[0x%02X] %s | Data: ",
+                rxFrame.data[0], cmd_name);
+
+        // Add all data bytes
+        for (uint8_t i = 1; i < rxFrame.dlc && i < 8; i++) {
+          len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
+        }
+
+        len += sprintf(uart_buffer + len, "\r\n");
+
+        // Send to UART
+        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
+
+        // Handle CMD_SET_END_VOLTAGE
+        if (rxFrame.data[0] == CMD_SET_END_VOLTAGE && rxFrame.dlc == 8) {
                     // Parse voltage value from data[7] (last byte) (e.g., 0xF6 = 246 = 24.6V)
                     uint8_t voltage_raw = rxFrame.data[7];
                     end_voltage = (float)voltage_raw / 10.0f;

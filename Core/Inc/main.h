@@ -63,6 +63,8 @@ void Error_Handler(void);
 #define BUILTIN_LED_GPIO_Port GPIOC
 #define CAN_PROG_BTN_Pin GPIO_PIN_14
 #define CAN_PROG_BTN_GPIO_Port GPIOC
+#define LED_WS2812C_Pin GPIO_PIN_15
+#define LED_WS2812C_GPIO_Port GPIOC
 #define PWM_BUCK_Pin GPIO_PIN_0
 #define PWM_BUCK_GPIO_Port GPIOA
 #define FAN_TACH_Pin GPIO_PIN_2
