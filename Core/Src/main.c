@@ -422,7 +422,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 41999;
+  htim2.Init.Period = 666;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
@@ -559,6 +559,7 @@ static void MX_TIM4_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN TIM4_Init 2 */
   if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2) != HAL_OK)
 {
     Error_Handler();
@@ -587,9 +588,6 @@ static void MX_TIM4_Init(void)
 {
     Error_Handler();
 }
-
-  /* USER CODE BEGIN TIM4_Init 2 */
-
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
 
