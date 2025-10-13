@@ -18,6 +18,10 @@
 #define CMD_READ_POWER              0x0B
 
 
+// Prototype for the command parser implemented in Core/Src/commands.c
+void ParseCommand(char *line);
+
+
 static inline const char* CAN_GetCommandName(uint8_t cmd_code) {
     switch (cmd_code) {
         case CMD_GET_STATUS:            return "GET_STATUS";
