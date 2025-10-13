@@ -84,13 +84,26 @@ const osThreadAttr_t adcTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for uartRxQueue */
+osMessageQueueId_t uartRxQueueHandle;
+const osMessageQueueAttr_t uartRxQueue_attributes = {
+  .name = "uartRxQueue"
+};
 /* USER CODE BEGIN PV */
 // Global variables to store settings
 volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
 volatile float battery_voltage = 20.0f;  // Current battery voltage
 volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
-
+#define UART_RX_BUFFER_SIZE 128
+char uartRxLine[UART_RX_BUFFER_SIZE];
+uint16_t uartRxIndex = 0;
+// ISR-based UART line buffer
+static char isrRxLine[UART_RX_BUFFER_SIZE];
+static uint16_t isrRxIndex = 0;
+// UART RX byte buffer for ISR
+static uint8_t uart_rx_byte;
+static void uart_send_frame(const char *prefix, CAN_Frame *frame);
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -107,6 +120,8 @@ void UartTask(void *argument);
 void CanTaskHandler(void *argument);
 void ChargerTaskHandler(void *argument);
 void AdcTaskHandler(void *argument);
+static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
+uint8_t Flash_Read_CAN_ID(void);
 
 /* USER CODE BEGIN PFP */
 
@@ -155,6 +170,9 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+
+  /* Start UART interrupt-driven receive for 1 byte */
+  HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
 
   // Read CAN ID from flash on startup
   uint8_t can_id = Flash_Read_CAN_ID();
@@ -207,6 +225,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of uartRxQueue */
+  uartRxQueueHandle = osMessageQueueNew (128, sizeof(uint8_t), &uartRxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -581,34 +603,13 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
-  if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4) != HAL_OK)
-{
-    Error_Handler();
-}
-  if (HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1) != HAL_OK)
-{
-    Error_Handler();
-}
+  start_pwm_or_error(&htim4, TIM_CHANNEL_2);
+  start_pwm_or_error(&htim4, TIM_CHANNEL_1);
+  start_pwm_or_error(&htim3, TIM_CHANNEL_1);
+  start_pwm_or_error(&htim3, TIM_CHANNEL_2);
+  start_pwm_or_error(&htim3, TIM_CHANNEL_3);
+  start_pwm_or_error(&htim3, TIM_CHANNEL_4);
+  start_pwm_or_error(&htim2, TIM_CHANNEL_1);
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
 
@@ -642,7 +643,9 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-
+  // Enable UART1 interrupt
+  HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE END USART1_Init 2 */
 
 }
@@ -723,6 +726,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+// Helper to start PWM and call Error_Handler on failure
+static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel)
+{
+  if (HAL_TIM_PWM_Start(htim, channel) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
 
 // 💾 Zapis wartości (0x71–0x76)
 void Flash_Save_CAN_ID(uint8_t id)
@@ -777,6 +788,41 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   }
 }
 
+/**
+ * @brief UART Rx complete callback
+ * This is called from HAL when one byte is received via interrupt.
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart == &huart1) {
+    // Toggle onboard LED (PC13) on each received byte
+    HAL_GPIO_TogglePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin);
+
+    // Accumulate byte into ISR buffer
+    if (isrRxIndex < UART_RX_BUFFER_SIZE - 1) {
+      isrRxLine[isrRxIndex++] = uart_rx_byte;
+    }
+
+    // Check for CRLF (\r\n)
+    if (isrRxIndex >= 2 && isrRxLine[isrRxIndex - 2] == '\r' && isrRxLine[isrRxIndex - 1] == '\n') {
+      // Null-terminate the line (replace \r with \0)
+      isrRxLine[isrRxIndex - 2] = '\0';
+
+      // Copy completed line to task buffer (assuming task buffer is free)
+      strcpy(uartRxLine, isrRxLine);
+
+      // Reset ISR buffer
+      isrRxIndex = 0;
+
+      // Notify UartTask via thread flag
+      osThreadFlagsSet(uartTaskHandle, 0x01);
+    }
+
+    // Restart reception for next byte
+    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+  }
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_UartTask */
@@ -789,12 +835,18 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void UartTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-   for(;;)
-  {
-    osDelay(1); // Adjust as needed
 
+  for (;;)
+  {
+    // Wait for ISR notification (thread flag)
+    uint32_t flags = osThreadFlagsWait(0x01, osFlagsWaitAny, osWaitForever);
+
+    if (flags & 0x01) {
+      // Process the received line
+      ParseCommand(uartRxLine);
+    }
   }
+
   /* USER CODE END 5 */
 }
 
@@ -893,8 +945,8 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "[INFO] Response sent: [05 00 01 00 00 00 00 F6]\r\n";
-                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
+                        uart_send_frame("[INFO] Response sent: ", &txFrame);
+  
                     } else {
                         osDelay(5);
                         const char* err_msg = "[WARN] Failed to send response\r\n";
@@ -947,8 +999,8 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        const char* resp_msg = "[INFO] Response sent: [06 00 01 00 00 00 00 XX]\r\n";
-                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_msg, strlen(resp_msg), HAL_MAX_DELAY);
+                        uart_send_frame("[INFO] Response sent: ", &txFrame);
+
                     } else {
                         osDelay(5);
                         const char* err_msg = "[WARN] Failed to send response\r\n";
@@ -996,10 +1048,7 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        char resp_buffer[60];
-                        int resp_len = sprintf(resp_buffer, "[INFO] Response sent: [07 00 00 00 00 00 00 %02X]\r\n", 
-                                              batt_present);
-                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
+                        uart_send_frame("[INFO] Response sent: ", &txFrame);
                         
                         // FOR TESTING: Toggle battery_voltage between 0V and 20V
                         if (battery_voltage > 10.0f) {
@@ -1074,12 +1123,7 @@ void CanTaskHandler(void *argument)
                     // Send CAN response
                     if (MCP2515_SendMessage(&hspi1, &txFrame) == MCP2515_OK) {
                         osDelay(5);
-                        char resp_buffer[80];
-                        int resp_len = sprintf(resp_buffer, 
-                            "[INFO] Response sent: [08 00 %02X %02X %02X %02X %02X %02X]\r\n",
-                            txFrame.data[2], txFrame.data[3], txFrame.data[4], 
-                            txFrame.data[5], txFrame.data[6], txFrame.data[7]);
-                        HAL_UART_Transmit(&huart1, (uint8_t*)resp_buffer, resp_len, HAL_MAX_DELAY);
+                        uart_send_frame("[INFO] Response sent: ", &txFrame);
                     } else {
                         osDelay(5);
                         const char* err_msg = "!!! Failed to send response\r\n";
@@ -1163,6 +1207,30 @@ void AdcTaskHandler(void *argument)
   }
   /* USER CODE END AdcTaskHandler */
 }
+
+// Send entire 8-byte CAN frame as hex with prefix
+static void uart_send_frame(const char *prefix, CAN_Frame *frame)
+{
+    char buf[128];
+    int pos = snprintf(buf, sizeof(buf), "%s[", prefix ? prefix : "");
+    for (int i = 0; i < 8 && pos < (int)sizeof(buf) - 4; ++i) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", (unsigned)frame->data[i]);
+    }
+    if (pos > 0) {
+        buf[pos - 1] = ']';
+        buf[pos] = '\0';
+    } else {
+        buf[0] = '\0';
+    }
+    size_t len = strlen(buf);
+    if (len < sizeof(buf) - 2) {
+        buf[len++] = '\r';
+        buf[len++] = '\n';
+        buf[len] = '\0';
+    }
+    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+}
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode
