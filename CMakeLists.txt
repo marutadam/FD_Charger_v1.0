@@ -46,6 +46,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/mcp2515.c
+    Core/Src/commands.c
+    Core/Src/battery_balance.c
 )
 
 # Add include paths
