@@ -23,7 +23,7 @@ typedef enum {
 
 /* CAN Frame Structure */
 typedef struct {
-    uint32_t id;            // CAN ID (11-bit or 29-bit)
+    uint8_t id;            // CAN ID (11-bit or 29-bit)
     uint8_t extended;       // 0 = Standard ID, 1 = Extended ID
     uint8_t rtr;            // Remote Transmission Request
     uint8_t dlc;            // Data Length Code (0-8)
@@ -32,4 +32,11 @@ typedef struct {
 
 void ProcessCanFrame(CAN_Frame *rxFrame);
 const char* CAN_GetCommandName(uint8_t cmd);
+CAN_Frame StartCharging();
+CAN_Frame StopCharging();
+void ResetSystem(void);
+CAN_Frame SetEndVoltage(uint8_t voltage);
+CAN_Frame SetCurrent(uint8_t current);
+CAN_Frame CreateResponse(CAN_COMMAND cmd);
+
 #endif // CAN_PROCESS_H
