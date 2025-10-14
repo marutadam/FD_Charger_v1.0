@@ -60,7 +60,7 @@ UART_HandleTypeDef huart1;
 osThreadId_t uartTaskHandle;
 const osThreadAttr_t uartTask_attributes = {
   .name = "uartTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for canTask */
@@ -95,7 +95,11 @@ volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
 volatile float battery_voltage = 20.0f;  // Current battery voltage
 volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
+volatile uint8_t rxByte;
+
+
 #define UART_RX_BUFFER_SIZE 128
+#define CMD_MAX_LEN 64
 char uartRxLine[UART_RX_BUFFER_SIZE];
 uint16_t uartRxIndex = 0;
 // ISR-based UART line buffer
@@ -103,7 +107,28 @@ static char isrRxLine[UART_RX_BUFFER_SIZE];
 static uint16_t isrRxIndex = 0;
 // UART RX byte buffer for ISR
 static uint8_t uart_rx_byte;
-static void uart_send_frame(const char *prefix, CAN_Frame *frame);
+
+static void uart_send_frame(const char *prefix, CAN_Frame *frame)
+{
+  char buffer[128];
+  int len = 0;
+  len += sprintf(buffer, "%sCAN ID: 0x%03lX | DLC: %d | Data: ",
+           prefix ? prefix : "", (unsigned long)frame->id, frame->dlc);
+  for (uint8_t i = 0; i < frame->dlc && i < 8; i++) {
+    len += sprintf(buffer + len, "%02X ", frame->data[i]);
+  }
+  if (frame->extended) {
+    len += sprintf(buffer + len, "| EXT");
+  }
+  if (frame->rtr) {
+    len += sprintf(buffer + len, " RTR");
+  }
+  len += sprintf(buffer + len, "\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
+}
+static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
+uint8_t Flash_Read_CAN_ID(void);
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,8 +145,6 @@ void UartTask(void *argument);
 void CanTaskHandler(void *argument);
 void ChargerTaskHandler(void *argument);
 void AdcTaskHandler(void *argument);
-static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
-uint8_t Flash_Read_CAN_ID(void);
 
 /* USER CODE BEGIN PFP */
 
@@ -172,7 +195,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   /* Start UART interrupt-driven receive for 1 byte */
-  HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+  HAL_UART_Receive_IT(&huart1, &rxByte, 1);
 
   // Read CAN ID from flash on startup
   uint8_t can_id = Flash_Read_CAN_ID();
@@ -228,7 +251,7 @@ int main(void)
 
   /* Create the queue(s) */
   /* creation of uartRxQueue */
-  uartRxQueueHandle = osMessageQueueNew (128, sizeof(uint8_t), &uartRxQueue_attributes);
+  uartRxQueueHandle = osMessageQueueNew (5, 20, &uartRxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -253,6 +276,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
+  HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1); // uruchom przerwanie odbioru
+
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -638,12 +663,8 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.Mode = UART_MODE_TX_RX;
   huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-  // Enable UART1 interrupt
+  HAL_UART_Init(&huart1);
+
   HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE END USART1_Init 2 */
@@ -794,32 +815,16 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  if (huart == &huart1) {
-    // Toggle onboard LED (PC13) on each received byte
+   // Toggle onboard LED (PC13) on each received byte
     HAL_GPIO_TogglePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin);
 
-    // Accumulate byte into ISR buffer
-    if (isrRxIndex < UART_RX_BUFFER_SIZE - 1) {
-      isrRxLine[isrRxIndex++] = uart_rx_byte;
-    }
 
-    // Check for CRLF (\r\n)
-    if (isrRxIndex >= 2 && isrRxLine[isrRxIndex - 2] == '\r' && isrRxLine[isrRxIndex - 1] == '\n') {
-      // Null-terminate the line (replace \r with \0)
-      isrRxLine[isrRxIndex - 2] = '\0';
+ if (huart->Instance == USART1) {
+  // Wysyłamy bajt do kolejki (z ISR)
+  osMessageQueuePut(uartRxQueueHandle, (const void *)&rxByte, 0, 0);
 
-      // Copy completed line to task buffer (assuming task buffer is free)
-      strcpy(uartRxLine, isrRxLine);
-
-      // Reset ISR buffer
-      isrRxIndex = 0;
-
-      // Notify UartTask via thread flag
-      osThreadFlagsSet(uartTaskHandle, 0x01);
-    }
-
-    // Restart reception for next byte
-    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+  // Uruchamiamy ponownie odbiór następnego bajtu
+  HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
   }
 }
 
@@ -836,16 +841,61 @@ void UartTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-  for (;;)
-  {
-    // Wait for ISR notification (thread flag)
-    uint32_t flags = osThreadFlagsWait(0x01, osFlagsWaitAny, osWaitForever);
+ uint8_t c;
+    char cmd[CMD_MAX_LEN];
+    uint8_t idx = 0;
 
-    if (flags & 0x01) {
-      // Process the received line
-      ParseCommand(uartRxLine);
+    for (;;)
+    {
+        if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, osWaitForever) == osOK)
+        {
+         
+
+            if (c == '\r' || c == '\n') {
+            cmd[idx] = '\0';
+
+            // Parse SETID command
+            if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
+                uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
+                Flash_Save_CAN_ID(new_id);
+                new_id = Flash_Read_CAN_ID(); // read back to confirm
+                char msg[32];
+                sprintf(msg, "CAN_ID set to 0x%02X\r\n", new_id);
+                HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+            }
+            // Parse GETID command
+            else if (strcmp(cmd, "GETID") == 0) {
+                uint8_t current_id = Flash_Read_CAN_ID();
+                char msg[32];
+                sprintf(msg, "CAN_ID is 0x%02X\r\n", current_id);
+                HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+            }
+            else {
+                // Echo unknown command
+                HAL_UART_Transmit(&huart1, (uint8_t*)cmd, idx, HAL_MAX_DELAY);
+                HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+            }
+            idx = 0;
+} else if (idx < CMD_MAX_LEN - 1) {
+    cmd[idx++] = c;
+}
+        }
+        osDelay(10);
     }
-  }
+
+
+
+
+  // for (;;)
+  // {
+  //   // Wait for ISR notification (thread flag)
+  //   uint32_t flags = osThreadFlagsWait(0x01, osFlagsWaitAny, osWaitForever);
+
+  //   if (flags & 0x01) {
+  //     // Process the received line
+  //     ParseCommand(uartRxLine);
+  //   }
+  // }
 
   /* USER CODE END 5 */
 }
@@ -1207,30 +1257,6 @@ void AdcTaskHandler(void *argument)
   }
   /* USER CODE END AdcTaskHandler */
 }
-
-// Send entire 8-byte CAN frame as hex with prefix
-static void uart_send_frame(const char *prefix, CAN_Frame *frame)
-{
-    char buf[128];
-    int pos = snprintf(buf, sizeof(buf), "%s[", prefix ? prefix : "");
-    for (int i = 0; i < 8 && pos < (int)sizeof(buf) - 4; ++i) {
-        pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", (unsigned)frame->data[i]);
-    }
-    if (pos > 0) {
-        buf[pos - 1] = ']';
-        buf[pos] = '\0';
-    } else {
-        buf[0] = '\0';
-    }
-    size_t len = strlen(buf);
-    if (len < sizeof(buf) - 2) {
-        buf[len++] = '\r';
-        buf[len++] = '\n';
-        buf[len] = '\0';
-    }
-    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
-}
-
 
 /**
   * @brief  Period elapsed callback in non blocking mode
