@@ -844,58 +844,44 @@ void UartTask(void *argument)
  uint8_t c;
     char cmd[CMD_MAX_LEN];
     uint8_t idx = 0;
+    uint8_t last_was_eol = 0;
+for (;;) {
+    if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, osWaitForever) == osOK) {
+        if ((c == '\r' || c == '\n')) {
+            if (!last_was_eol) {
+                cmd[idx] = '\0';
 
-    for (;;)
-    {
-        if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, osWaitForever) == osOK)
-        {
-         
-
-            if (c == '\r' || c == '\n') {
-            cmd[idx] = '\0';
-
-            // Parse SETID command
-            if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
-                uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
-                Flash_Save_CAN_ID(new_id);
-                new_id = Flash_Read_CAN_ID(); // read back to confirm
-                char msg[32];
-                sprintf(msg, "CAN_ID set to 0x%02X\r\n", new_id);
-                HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+                // Parse SETID command
+                if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
+                    uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
+                    Flash_Save_CAN_ID(new_id);
+                    new_id = Flash_Read_CAN_ID(); // read back to confirm
+                    char msg[32];
+                    sprintf(msg, "CAN_ID set to 0x%02X\r\n", new_id);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+                }
+                // Parse GETID command
+                else if (strcmp(cmd, "GETID") == 0) {
+                    uint8_t current_id = Flash_Read_CAN_ID();
+                    char msg[32];
+                    sprintf(msg, "CAN_ID is 0x%02X\r\n", current_id);
+                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+                }
+                else {
+                    // Respond with error for unknown command
+                    const char *err_msg = "[ERROR] Unknown command\r\n";
+                    HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                }
+                idx = 0;
+                last_was_eol = 1;
             }
-            // Parse GETID command
-            else if (strcmp(cmd, "GETID") == 0) {
-                uint8_t current_id = Flash_Read_CAN_ID();
-                char msg[32];
-                sprintf(msg, "CAN_ID is 0x%02X\r\n", current_id);
-                HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-            }
-            else {
-                // Respond with error for unknown command
-                const char *err_msg = "[ERROR] Unknown command\r\n";
-                HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
-            }
-            idx = 0;
-} else if (idx < CMD_MAX_LEN - 1) {
-    cmd[idx++] = c;
-}
+        } else if (idx < CMD_MAX_LEN - 1) {
+            cmd[idx++] = c;
+            last_was_eol = 0;
         }
-        osDelay(10);
     }
-
-
-
-
-  // for (;;)
-  // {
-  //   // Wait for ISR notification (thread flag)
-  //   uint32_t flags = osThreadFlagsWait(0x01, osFlagsWaitAny, osWaitForever);
-
-  //   if (flags & 0x01) {
-  //     // Process the received line
-  //     ParseCommand(uartRxLine);
-  //   }
-  // }
+    osDelay(10);
+}
 
   /* USER CODE END 5 */
 }
