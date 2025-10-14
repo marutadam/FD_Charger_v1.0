@@ -871,9 +871,9 @@ void UartTask(void *argument)
                 HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
             }
             else {
-                // Echo unknown command
-                HAL_UART_Transmit(&huart1, (uint8_t*)cmd, idx, HAL_MAX_DELAY);
-                HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+                // Respond with error for unknown command
+                const char *err_msg = "[ERROR] Unknown command\r\n";
+                HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
             }
             idx = 0;
 } else if (idx < CMD_MAX_LEN - 1) {
