@@ -43,6 +43,7 @@ static TIM_HandleTypeDef* cell_timer(uint8_t cell_index, uint32_t *channel) {
 void enable_cell_balance(uint8_t cell_index, uint8_t duty_percent) {
     uint32_t channel;
     TIM_HandleTypeDef *htim = cell_timer(cell_index, &channel);
+    
     if (htim == NULL) return;
 
     // Calculate compare (pulse) value from duty percent and timer ARR
