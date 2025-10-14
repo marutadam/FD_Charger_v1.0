@@ -23,9 +23,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "mcp2515.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "commands.h"
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -95,18 +97,10 @@ volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
 volatile float battery_voltage = 20.0f;  // Current battery voltage
 volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
+
 volatile uint8_t rxByte;
-
-
-#define UART_RX_BUFFER_SIZE 128
 #define CMD_MAX_LEN 64
-char uartRxLine[UART_RX_BUFFER_SIZE];
-uint16_t uartRxIndex = 0;
-// ISR-based UART line buffer
-static char isrRxLine[UART_RX_BUFFER_SIZE];
-static uint16_t isrRxIndex = 0;
-// UART RX byte buffer for ISR
-static uint8_t uart_rx_byte;
+
 
 static void uart_send_frame(const char *prefix, CAN_Frame *frame)
 {
@@ -128,6 +122,8 @@ static void uart_send_frame(const char *prefix, CAN_Frame *frame)
 }
 static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
 uint8_t Flash_Read_CAN_ID(void);
+
+uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
 
 /* USER CODE END PV */
 
@@ -195,12 +191,12 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   /* Start UART interrupt-driven receive for 1 byte */
-  HAL_UART_Receive_IT(&huart1, &rxByte, 1);
+  HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
 
   // Read CAN ID from flash on startup
-  uint8_t can_id = Flash_Read_CAN_ID();
+  CAN_ID = Flash_Read_CAN_ID();
   char canid_msg[64];
-  sprintf(canid_msg, "Startup CAN_ID from flash: 0x%02X\r\n", can_id);
+  sprintf(canid_msg, "Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
   HAL_UART_Transmit(&huart1, (uint8_t*)canid_msg, strlen(canid_msg), HAL_MAX_DELAY);
 
   // Initialize MCP2515 with 125kbps CAN speed
@@ -855,9 +851,9 @@ for (;;) {
                 if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
                     uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
                     Flash_Save_CAN_ID(new_id);
-                    new_id = Flash_Read_CAN_ID(); // read back to confirm
+                    CAN_ID = Flash_Read_CAN_ID(); // update global CAN_ID
                     char msg[32];
-                    sprintf(msg, "CAN_ID set to 0x%02X\r\n", new_id);
+                    sprintf(msg, "CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
                 }
                 // Parse GETID command
@@ -1166,29 +1162,30 @@ void CanTaskHandler(void *argument)
                         HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
                     }
                 }
-            } else {
-                // Different ID - just print basic CAN frame info
-                int len = sprintf(uart_buffer, "CAN ID: 0x%03lX | DLC: %d | Data: ", 
-                                (unsigned long)rxFrame.id, rxFrame.dlc);
+              }
+            // } else {
+            //     // Different ID - just print basic CAN frame info
+            //     int len = sprintf(uart_buffer, "CAN ID: 0x%03lX | DLC: %d | Data: ", 
+            //                     (unsigned long)rxFrame.id, rxFrame.dlc);
                 
-                // Add all data bytes
-                for (uint8_t i = 0; i < rxFrame.dlc && i < 8; i++) {
-                    len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
-                }
+            //     // Add all data bytes
+            //     for (uint8_t i = 0; i < rxFrame.dlc && i < 8; i++) {
+            //         len += sprintf(uart_buffer + len, "%02X ", rxFrame.data[i]);
+            //     }
                 
-                // Add frame type if needed
-                if (rxFrame.extended) {
-                    len += sprintf(uart_buffer + len, "| EXT");
-                }
-                if (rxFrame.rtr) {
-                    len += sprintf(uart_buffer + len, " RTR");
-                }
+            //     // Add frame type if needed
+            //     if (rxFrame.extended) {
+            //         len += sprintf(uart_buffer + len, "| EXT");
+            //     }
+            //     if (rxFrame.rtr) {
+            //         len += sprintf(uart_buffer + len, " RTR");
+            //     }
                 
-                len += sprintf(uart_buffer + len, "\r\n");
+            //     len += sprintf(uart_buffer + len, "\r\n");
                 
-                // Send to UART
-                HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
-            }
+            //     // Send to UART
+            //     HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
+            // }
         }
     }
     
