@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 
-#define CAN_ID 0x71
 //  Charger command codes
 #define CMD_GET_STATUS              0x01
 #define CMD_START_CHARGING          0x02
@@ -17,9 +16,6 @@
 #define CMD_READ_MAH                0x0A
 #define CMD_READ_POWER              0x0B
 
-
-// Prototype for the command parser implemented in Core/Src/commands.c
-void ParseCommand(char *line);
 
 
 static inline const char* CAN_GetCommandName(uint8_t cmd_code) {
