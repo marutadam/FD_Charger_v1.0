@@ -38,7 +38,16 @@ void ResetSystem(void);
 CAN_Frame SetEndVoltage(uint8_t voltage);
 CAN_Frame SetCurrent(uint8_t current);
 CAN_Frame ReadCurrentVoltage(void);
+CAN_Frame ReadCurrentCurrent(void);
+CAN_Frame ReadCurrentmAh(void);
+CAN_Frame ReadCurrentPower(void);
+CAN_Frame IsBatteryPresent(void);
 CAN_Frame CreateResponse(CAN_COMMAND cmd);
 CAN_Frame CheckSystem(void);
 extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes
+extern volatile float set_current;
+extern volatile float charging_current; 
+extern volatile uint16_t charged_mah;
+extern volatile uint16_t charging_power;
+extern volatile uint8_t is_battery_present;
 #endif // CAN_PROCESS_H

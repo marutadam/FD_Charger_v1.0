@@ -55,21 +55,21 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_SET_CURRENT:
                 response = SetCurrent(rxFrame->data[7]);
                 break;
-            // case CMD_IS_BATT_PRESENT:
-            //     response = IsBatteryPresent();
-            //     break;
+            case CMD_IS_BATT_PRESENT:
+                response = IsBatteryPresent();
+                break;
             case CMD_READ_CURRENT_VOLTAGE:
                 response = ReadCurrentVoltage();
                 break;
-            // case CMD_READ_CURRENT_CURRENT:
-            //     response = ReadCurrentCurrent();
-            //     break;
-            // case CMD_READ_CURRENT_MAH:
-            //     response = ReadCurrentmAh();
-            //     break;
-            // case CMD_READ_CURRENT_POWER: 
-            //     response = ReadCurrentPower();   
-            //     break;
+            case CMD_READ_CURRENT_CURRENT:
+                response = ReadCurrentCurrent();
+                break;
+            case CMD_READ_CURRENT_MAH:
+                response = ReadCurrentmAh();
+                break;
+            case CMD_READ_CURRENT_POWER: 
+                response = ReadCurrentPower();   
+                break;
             default:
                 // Unknown command
                 return;
@@ -148,7 +148,7 @@ CAN_Frame SetCurrent(uint8_t current) {
 CAN_Frame CheckSystem(void){
     CAN_Frame response = CreateResponse(CMD_CHECK);
 
-    for (int i = 0; i < 7; i++) {
+    for (int i = 1; i < 7; i++) {
         response.data[i] = 0x00; 
     }
     response.data[7] = system_state; 
@@ -156,10 +156,14 @@ CAN_Frame CheckSystem(void){
 }
 
 
-// CAN_Frame IsBatteryPresent() {
-//     // Placeholder logic, replace with actual battery presence detection
-//     return 1; // Assume battery is always present for now
-// }
+CAN_Frame IsBatteryPresent() {
+CAN_Frame response = CreateResponse(CMD_IS_BATT_PRESENT);
+    for (int i = 1; i < 7; i++) {
+        response.data[i] = 0x00;
+    }
+    response.data[7] = is_battery_present;
+    return response;
+}
 CAN_Frame ReadCurrentVoltage() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
     for (int i = 1; i < 7; i++) {
@@ -173,18 +177,37 @@ CAN_Frame ReadCurrentVoltage() {
     response.data[7] = (uint8_t)(battery_voltage * 10.0f);
     return response;
 }
-// CAN_Frame ReadCurrentCurrent() {
-//     return set_current; // Return the current charging current
-// }
+CAN_Frame ReadCurrentCurrent() {
+CAN_Frame response = CreateResponse(CMD_READ_CURRENT_CURRENT);
+    for (int i = 1; i < 7; i++) {
+        response.data[i] = 0x00;
+    }
+    response.data[7] = (uint8_t)(charging_current * 10.0f);
+    return response;
+}
 
-// CAN_Frame ReadCurrentmAh() {
-//     // Placeholder logic, replace with actual mAh reading
-//     return 1000.0f; // Example value
-// }
+CAN_Frame ReadCurrentmAh() {
+    CAN_Frame response = CreateResponse(CMD_READ_CURRENT_MAH);
+    for (int i = 1; i < 7; i++) {
+        response.data[i] = 0x00;
+    }
+    uint8_t high_byte = (charged_mah >> 8) & 0xFF;  
+    uint8_t low_byte  = charged_mah & 0xFF;         
+    response.data[6] = high_byte;
+    response.data[7] = low_byte;
+    return response;
+}
 
-// CAN_Frame ReadCurrentPower() {
-//     return battery_voltage * set_current; // Power = Voltage * Current
-// }
+CAN_Frame ReadCurrentPower() {
+ CAN_Frame response = CreateResponse(CMD_READ_CURRENT_POWER);
+    for (int i = 1; i < 7; i++) {
+        response.data[i] = 0x00;
+    }
+    uint8_t high_byte = (charging_power >> 8) & 0xFF;  
+    uint8_t low_byte  = charging_power & 0xFF;         
+    response.data[6] = high_byte;
+    response.data[7] = low_byte;
+    return response;}
 
 CAN_Frame CreateResponse(CAN_COMMAND cmd) {
     CAN_Frame response;
