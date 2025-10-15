@@ -97,7 +97,7 @@ volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
 volatile float battery_voltage = 20.0f;  // Current battery voltage
 volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
-
+volatile uint8_t system_state = 0x00; // 0x00 = System ok, 0x0X = error codes
 volatile uint8_t rxByte;
 #define CMD_MAX_LEN 64
 
