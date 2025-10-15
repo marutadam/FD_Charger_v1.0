@@ -45,9 +45,16 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    Core/Src/main.c
+    Core/Src/can_process.c
     Core/Src/mcp2515.c
-    Core/Src/commands.c
     Core/Src/battery_balance.c
+    Core/Src/freertos.c
+    Core/Src/stm32f4xx_it.c
+    Core/Src/stm32f4xx_hal_msp.c
+    Core/Src/stm32f4xx_hal_timebase_tim.c
+    Core/Src/sysmem.c
+    Core/Src/syscalls.c
 )
 
 # Add include paths
