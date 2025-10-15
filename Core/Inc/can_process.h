@@ -37,6 +37,8 @@ CAN_Frame StopCharging();
 void ResetSystem(void);
 CAN_Frame SetEndVoltage(uint8_t voltage);
 CAN_Frame SetCurrent(uint8_t current);
+CAN_Frame ReadCurrentVoltage(void);
 CAN_Frame CreateResponse(CAN_COMMAND cmd);
-
+CAN_Frame CheckSystem(void);
+extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes
 #endif // CAN_PROCESS_H

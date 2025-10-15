@@ -46,9 +46,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_RESET:
                 ResetSystem();
                 break;
-            // case CMD_CHECK:
-            //     response = CheckSystem();
-            //     break; 
+            case CMD_CHECK:
+                response = CheckSystem();
+                break; 
             case CMD_SET_END_VOLTAGE:
                 response = SetEndVoltage(rxFrame->data[7]);
                 break;
@@ -58,9 +58,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             // case CMD_IS_BATT_PRESENT:
             //     response = IsBatteryPresent();
             //     break;
-            // case CMD_READ_CURRENT_VOLTAGE:
-            //     response = ReadCurrentVoltage();
-            //     break;
+            case CMD_READ_CURRENT_VOLTAGE:
+                response = ReadCurrentVoltage();
+                break;
             // case CMD_READ_CURRENT_CURRENT:
             //     response = ReadCurrentCurrent();
             //     break;
@@ -145,13 +145,34 @@ CAN_Frame SetCurrent(uint8_t current) {
     return response;
 }
 
+CAN_Frame CheckSystem(void){
+    CAN_Frame response = CreateResponse(CMD_CHECK);
+
+    for (int i = 0; i < 7; i++) {
+        response.data[i] = 0x00; 
+    }
+    response.data[7] = system_state; 
+    return response;
+}
+
+
 // CAN_Frame IsBatteryPresent() {
 //     // Placeholder logic, replace with actual battery presence detection
 //     return 1; // Assume battery is always present for now
 // }
-// CAN_Frame ReadCurrentVoltage() {
-//     return battery_voltage; // Return the current battery voltage      
-// }
+CAN_Frame ReadCurrentVoltage() {
+    CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
+    for (int i = 1; i < 7; i++) {
+        float v = cell_voltages[i-1];
+        // Encode: byte_value = (voltage - 1.80) / 0.01
+        int byte_value = (uint8_t)((v - 1.80f) * 100.0f);
+        if (byte_value < 0) byte_value = 0;
+        if (byte_value > 255) byte_value = 255;
+        response.data[i] = (uint8_t)byte_value;
+    }
+    response.data[7] = (uint8_t)(battery_voltage * 10.0f);
+    return response;
+}
 // CAN_Frame ReadCurrentCurrent() {
 //     return set_current; // Return the current charging current
 // }
