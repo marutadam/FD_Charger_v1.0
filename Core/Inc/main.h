@@ -31,6 +31,8 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+// Ensure CAN_Frame is defined for uart_send_frame
+#include "mcp2515.h"
 
 /* USER CODE END Includes */
 
@@ -101,3 +103,13 @@ void Error_Handler(void);
 #endif
 
 #endif /* __MAIN_H */
+
+// Externs for CAN processing module
+extern UART_HandleTypeDef huart1;
+extern uint8_t CAN_ID;
+extern volatile float end_voltage;
+extern volatile float set_current;
+extern volatile float battery_voltage;
+extern volatile float cell_voltages[6];
+void uart_send_frame(const char *prefix, CAN_Frame *frame);
+void ProcessCanFrame(CAN_Frame *rxFrame);
