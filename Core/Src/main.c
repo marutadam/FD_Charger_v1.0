@@ -200,7 +200,8 @@ int main(void)
   HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
 
   // Read CAN ID from flash on startup
-  CAN_ID = Flash_Read_CAN_ID();
+  //CAN_ID = Flash_Read_CAN_ID();
+  CAN_ID = ParamStore_Read_CAN_ID();
   char canid_msg[64];
   sprintf(canid_msg, "Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
   HAL_UART_Transmit(&huart1, (uint8_t*)canid_msg, strlen(canid_msg), HAL_MAX_DELAY);
@@ -856,8 +857,8 @@ for (;;) {
                 // Parse SETID command
                 if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
                     uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
-                    Flash_Save_CAN_ID(new_id);
-                    CAN_ID = Flash_Read_CAN_ID(); // update global CAN_ID
+                    ParamStore_Save_CAN_ID(new_id);
+                    CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
                     char msg[32];
                     sprintf(msg, "CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);

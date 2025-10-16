@@ -35,7 +35,7 @@ extern "C" {
 // Ensure CAN_Frame is defined for uart_send_frame
 #include "mcp2515.h"
 #include "battery_balance.h"
-
+#include "flash_param_store.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -95,6 +95,7 @@ void Error_Handler(void);
 #define CELL5_PWM_GPIO_Port GPIOB
 #define CELL6_PWM_Pin GPIO_PIN_7
 #define CELL6_PWM_GPIO_Port GPIOB
+#define FLASH_ADDR_CAN_ID  0x0807FFF0
 
 
 #ifdef __cplusplus
