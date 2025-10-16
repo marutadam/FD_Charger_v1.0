@@ -28,9 +28,11 @@ typedef struct {
     float Kp;              // proportional gain (duty % per volt)
     float enable_thresh;   // volts above target to start balancing
     float disable_thresh;  // volts above target to stop balancing (hysteresis)
-    uint32_t min_on_ms;    // minimum on time in milliseconds
+    uint16_t min_on_ms;    // minimum on time in milliseconds
     uint8_t duty_max;      // maximum duty percent (0-100)
+    float storage_volt;  // voltage to maintain when charging is done
 } BalanceControllerCfg;
+
 
 void balance_controller_init(uint8_t cell_index, BalanceControllerCfg cfg);
 void balance_controller_update(uint8_t cell_index, float cell_voltage, float target_voltage);

@@ -112,3 +112,6 @@ TAGS
 # Temporary files
 *.tmp
 *.temp
+
+.settings
+.clangd

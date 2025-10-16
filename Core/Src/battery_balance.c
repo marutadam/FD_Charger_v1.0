@@ -54,12 +54,7 @@ void enable_cell_balance(uint8_t cell_index, uint8_t duty_percent) {
 }
 
 void disable_cell_balance(uint8_t cell_index) {
-    uint32_t channel;
-    TIM_HandleTypeDef *htim = cell_timer(cell_index, &channel);
-    if (htim == NULL) return;
-
-    // Don't stop the timer; set compare to 0 to effectively disable output
-    __HAL_TIM_SET_COMPARE(htim, channel, 0);
+ enable_cell_balance(cell_index, 0);
 }
 
 // --- Controller state -------------------------------------------------
