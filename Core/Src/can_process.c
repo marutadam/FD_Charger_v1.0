@@ -70,6 +70,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_READ_CURRENT_POWER: 
                 response = ReadCurrentPower();   
                 break;
+            // case CMD_CONFIG_BALANCE:
+            //     response = ConfigBalance(&rxFrame);
+            //     break;
             default:
                 // Unknown command
                 return;
@@ -104,6 +107,7 @@ CAN_Frame StopCharging() {
 void ResetSystem() {
     NVIC_SystemReset(); // Perform a system reset
 }
+
 CAN_Frame SetEndVoltage(uint8_t voltage) {
     end_voltage = (float)voltage / 10.0f;
     
@@ -157,13 +161,14 @@ CAN_Frame CheckSystem(void){
 
 
 CAN_Frame IsBatteryPresent() {
-CAN_Frame response = CreateResponse(CMD_IS_BATT_PRESENT);
+    CAN_Frame response = CreateResponse(CMD_IS_BATT_PRESENT);
     for (int i = 1; i < 7; i++) {
         response.data[i] = 0x00;
     }
     response.data[7] = is_battery_present;
     return response;
 }
+
 CAN_Frame ReadCurrentVoltage() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
     for (int i = 1; i < 7; i++) {
@@ -177,8 +182,9 @@ CAN_Frame ReadCurrentVoltage() {
     response.data[7] = (uint8_t)(battery_voltage * 10.0f);
     return response;
 }
+
 CAN_Frame ReadCurrentCurrent() {
-CAN_Frame response = CreateResponse(CMD_READ_CURRENT_CURRENT);
+    CAN_Frame response = CreateResponse(CMD_READ_CURRENT_CURRENT);
     for (int i = 1; i < 7; i++) {
         response.data[i] = 0x00;
     }
@@ -221,3 +227,22 @@ CAN_Frame CreateResponse(CAN_COMMAND cmd) {
     }
     return response;
 }
+
+// CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
+//     CAN_Frame response = CreateResponse(CMD_CONFIG_BALANCE);
+//     char buffer[100];
+//     int len = sprintf(buffer, "[INFO] Balance Config: ");
+//     BalanceControllerCfg cfg;
+//     cfg.enable_thresh = (float)rxFrame->data[2] / 1000.0f; // mV to V
+//     cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
+//     cfg.Kp = (float)(rxFrame->data[4] * 4); 
+//     cfg.duty_max = rxFrame->data[5]; // percent
+//     cfg.min_on_ms = (uint16_t)(rxFrame->data[6] * 100); // ms
+//     cfg.storage_volt = (float)rxFrame->data[7] / 10.0f; // 0.1V to V
+    
+//     HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
+//     // Here you would apply the configuration to your balancing controllers
+//     response.data[1] = 0x00; // Acknowledge
+//     return response;
+// }
+// }   

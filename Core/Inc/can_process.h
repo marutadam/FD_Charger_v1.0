@@ -4,7 +4,7 @@
 #include "mcp2515.h"
 #include <stm32f4xx_hal.h>
 #include <stdint.h>
-
+#include "battery_balance.h"
 /* CAN Command Codes (data[0] byte for ID 0x72) */
 typedef enum {
     CMD_CHECK = 0x01,
@@ -18,6 +18,9 @@ typedef enum {
     CMD_READ_CURRENT_CURRENT = 0x09,
     CMD_READ_CURRENT_MAH = 0x0A,
     CMD_READ_CURRENT_POWER = 0x0B,
+    CMD_DISCHARGE = 0x0C,
+    CMD_STORAGE = 0x0D,
+    CMD_CONFIG_BALANCE = 0xF0,
     CMD_UNKNOWN = 0xFF
 } CAN_COMMAND;
 
@@ -30,8 +33,12 @@ typedef struct {
     uint8_t data[8];        // Data bytes
 } CAN_Frame;
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void ProcessCanFrame(CAN_Frame *rxFrame);
-const char* CAN_GetCommandName(uint8_t cmd);
 CAN_Frame StartCharging();
 CAN_Frame StopCharging();
 void ResetSystem(void);
@@ -44,10 +51,16 @@ CAN_Frame ReadCurrentPower(void);
 CAN_Frame IsBatteryPresent(void);
 CAN_Frame CreateResponse(CAN_COMMAND cmd);
 CAN_Frame CheckSystem(void);
+CAN_Frame ConfigBalance(CAN_Frame *rxFrame);
 extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes
 extern volatile float set_current;
 extern volatile float charging_current; 
 extern volatile uint16_t charged_mah;
 extern volatile uint16_t charging_power;
 extern volatile uint8_t is_battery_present;
+extern volatile BalanceControllerCfg balance_cfg;
+
+#ifdef __cplusplus
+}
+#endif
 #endif // CAN_PROCESS_H
