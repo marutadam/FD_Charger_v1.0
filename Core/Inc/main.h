@@ -22,6 +22,7 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,6 +34,7 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 // Ensure CAN_Frame is defined for uart_send_frame
 #include "mcp2515.h"
+#include "battery_balance.h"
 
 /* USER CODE END Includes */
 
@@ -94,9 +96,6 @@ void Error_Handler(void);
 #define CELL6_PWM_Pin GPIO_PIN_7
 #define CELL6_PWM_GPIO_Port GPIOB
 
-/* USER CODE BEGIN Private defines */
-#define FLASH_ADDR_CAN_ID  0x0807FFF0
-/* USER CODE END Private defines */
 
 #ifdef __cplusplus
 }
