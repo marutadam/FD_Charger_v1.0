@@ -55,6 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/stm32f4xx_hal_timebase_tim.c
     Core/Src/sysmem.c
     Core/Src/syscalls.c
+    Core/Src/flash_param_store.c
 )
 
 # Add include paths
