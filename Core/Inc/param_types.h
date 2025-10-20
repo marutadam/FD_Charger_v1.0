@@ -1,6 +1,6 @@
 
-#ifndef FLASH_PARAM_STORE_H
-#define FLASH_PARAM_STORE_H 
+#ifndef PARAM_TYPES_H
+#define PARAM_TYPES_H
 
 typedef struct {
     uint8_t can_id;          // 1 byte
@@ -22,3 +22,5 @@ typedef struct {
     uint8_t duty_max;      // maximum duty percent (0-100)
     float storage_volt;  // voltage to maintain when charging is done
 } BalanceControllerCfg;
+
+#endif // PARAM_TYPES_H
