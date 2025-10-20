@@ -63,6 +63,9 @@ typedef struct {
     BalanceControllerCfg cfg;
     uint8_t enabled; // 0 = off, 1 = on
     uint32_t last_on_ts; // HAL_GetTick() timestamp when turned on
+    uint32_t last_update_ts; // HAL_GetTick() of previous update
+    float integrator; // accumulated error
+    float prev_error; // previous error for derivative term
 } CellController;
 
 static CellController controllers[MAX_CELLS];
@@ -72,38 +75,91 @@ void balance_controller_init(uint8_t cell_index, BalanceControllerCfg cfg) {
     controllers[cell_index].cfg = cfg;
     controllers[cell_index].enabled = 0;
     controllers[cell_index].last_on_ts = 0;
+    controllers[cell_index].last_update_ts = HAL_GetTick();
+    controllers[cell_index].integrator = 0.0f;
+    controllers[cell_index].prev_error = 0.0f;
 }
 
 void balance_controller_update(uint8_t cell_index, float cell_voltage, float target_voltage) {
     if (cell_index >= MAX_CELLS) return;
     CellController *c = &controllers[cell_index];
     float err = cell_voltage - target_voltage;
+    uint32_t now = HAL_GetTick();
+    float dt = 0.0f;
+
+    if (c->last_update_ts != 0) {
+        uint32_t elapsed_ms = now - c->last_update_ts;
+        dt = elapsed_ms / 1000.0f;
+        if (dt < 0.0f) {
+            dt = 0.0f;
+        } else if (dt > 1.0f) {
+            // Clamp dt to avoid spikes if updates are delayed
+            dt = 1.0f;
+        }
+    }
+    c->last_update_ts = now;
 
     if (!c->enabled) {
+        // Reset integral when idle to prevent stale accumulation
+        c->integrator = 0.0f;
+        c->prev_error = err;
+
         // Check enable threshold
         if (err >= c->cfg.enable_thresh) {
-            // compute duty
-            float duty_f = c->cfg.Kp * err;
-            if (duty_f < 0) duty_f = 0;
-            if (duty_f > c->cfg.duty_max) duty_f = c->cfg.duty_max;
-            enable_cell_balance(cell_index, (uint8_t)duty_f);
             c->enabled = 1;
-            c->last_on_ts = HAL_GetTick();
+            c->last_on_ts = now;
+            // Fall through to compute first duty cycle immediately
+        } else {
+            return;
         }
     } else {
         // currently balancing: maintain until disable threshold or minimum on time passed
-        uint32_t now = HAL_GetTick();
         uint32_t on_elapsed = now - c->last_on_ts;
 
         if (err <= c->cfg.disable_thresh && on_elapsed >= c->cfg.min_on_ms) {
             disable_cell_balance(cell_index);
             c->enabled = 0;
-        } else {
-            // update duty while on
-            float duty_f = c->cfg.Kp * err;
-            if (duty_f < 0) duty_f = 0;
-            if (duty_f > c->cfg.duty_max) duty_f = c->cfg.duty_max;
-            enable_cell_balance(cell_index, (uint8_t)duty_f);
+            c->integrator = 0.0f;
+            c->prev_error = err;
+            return;
         }
     }
+
+    // PID control law
+    float derivative = 0.0f;
+    if (dt > 0.0f) {
+        derivative = (err - c->prev_error) / dt;
+    }
+    c->prev_error = err;
+
+    if (c->cfg.Ki != 0.0f && dt > 0.0f) {
+        c->integrator += err * dt;
+        // Anti-windup clamp
+        if (c->cfg.integral_limit > 0.0f) {
+            if (c->integrator > c->cfg.integral_limit) {
+                c->integrator = c->cfg.integral_limit;
+            } else if (c->integrator < -c->cfg.integral_limit) {
+                c->integrator = -c->cfg.integral_limit;
+            }
+        }
+    }
+
+    float duty_f = (c->cfg.Kp * err) + (c->cfg.Ki * c->integrator) + (c->cfg.Kd * derivative);
+
+    if (duty_f < 0.0f) {
+        duty_f = 0.0f;
+        // Optional: undo integral growth when saturated at zero
+        if (c->cfg.integral_limit > 0.0f && c->integrator > 0.0f) {
+            c->integrator = 0.0f;
+        }
+    }
+    if (duty_f > c->cfg.duty_max) {
+        duty_f = c->cfg.duty_max;
+        // Prevent integral wind-up at the high limit
+        if (c->cfg.integral_limit > 0.0f && c->integrator > c->cfg.integral_limit) {
+            c->integrator = c->cfg.integral_limit;
+        }
+    }
+
+    enable_cell_balance(cell_index, (uint8_t)duty_f);
 }
