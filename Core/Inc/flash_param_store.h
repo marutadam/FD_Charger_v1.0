@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "param_types.h"
-
+#include "main.h"
 #ifndef FLASH_PARAM_STORE_H
 #define FLASH_PARAM_STORE_H
 
@@ -21,6 +21,7 @@ uint8_t ParamStore_Read_CAN_ID(void);
 FlashParams ReadAllParams(void);
 void SaveAllParams(FlashParams params);
 void SaveBalanceConfig(FlashParams params);
+void PrintAllParamsToUART(void);
 // Add more save/read functions for other parameters
 
 #ifdef __cplusplus
