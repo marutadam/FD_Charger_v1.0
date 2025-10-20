@@ -29,6 +29,7 @@
 #include "can_process.h"
 #include "param_types.h"
 #include <stdlib.h>
+#include "battery_charge.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -196,6 +197,23 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+
+  ChargerControllerCfg charger_cfg = {
+    .current_kp = 8.0f,
+    .current_ki = 2.5f,
+    .voltage_kp = 6.0f,
+    .voltage_ki = 1.5f,
+    .integral_limit = 5.0f,
+    .duty_min = 3.0f,
+    .duty_max = 95.0f,
+    .voltage_hysteresis = 0.1f,
+    .termination_current = 0.5f,
+    .termination_hold_ms = 5000,
+    .cell_overvoltage_limit = 4.25f,
+    .update_period_ms = 10
+  };
+  charger_controller_init(charger_cfg);
+  charger_set_targets(end_voltage, set_current);
 
   /* Start UART interrupt-driven receive for 1 byte */
   HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
@@ -963,7 +981,22 @@ void ChargerTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    ChargerMeasurements meas;
+    meas.pack_voltage = battery_voltage;
+    meas.charge_current = charging_current;
+    float max_cell = cell_voltages[0];
+    for (uint8_t i = 1; i < 6; ++i) {
+      if (cell_voltages[i] > max_cell) {
+        max_cell = cell_voltages[i];
+      }
+    }
+    meas.max_cell_voltage = max_cell;
+    charger_update(&meas);
+    uint16_t delay_ms = charger_get_update_period_ms();
+    if (delay_ms == 0) {
+      delay_ms = 10;
+    }
+    osDelay(delay_ms);
   }
   /* USER CODE END ChargerTaskHandler */
 }

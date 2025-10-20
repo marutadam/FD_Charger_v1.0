@@ -1,4 +1,5 @@
 #include "flash_param_store.h"
+#include <stdio.h>
 
 // Save all parameters to flash
 void SaveAllParams(FlashParams params) {
@@ -91,4 +92,3 @@ uint8_t ParamStore_Read_CAN_ID(void) {
     FlashParams params = ReadAllParams();
     return params.can_id;
 }
-

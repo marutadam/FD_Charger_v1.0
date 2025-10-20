@@ -8,7 +8,7 @@ extern UART_HandleTypeDef huart1;
 #include <string.h>
 #include <cmsis_os.h>
 
-#include "main.h"
+#include "battery_charge.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,12 +96,15 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
 CAN_Frame StartCharging() {
     CAN_Frame response = CreateResponse(CMD_START);
     response.data[7] = 0x01;
+    charger_set_targets(end_voltage, set_current);
+    charger_enable();
     return response;
     // Additional logic to start charging can be added here
 }
 CAN_Frame StopCharging() {
     CAN_Frame response = CreateResponse(CMD_STOP);
     response.data[7] = 0x01;
+    charger_disable();
     return response;
     // Additional logic to stop charging can be added here
 }  
@@ -127,6 +130,7 @@ CAN_Frame SetEndVoltage(uint8_t voltage) {
     HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, HAL_MAX_DELAY);
 
     response.data[7] = (uint8_t)voltage_f;
+    charger_set_targets(end_voltage, set_current);
     return response;
 }
 
@@ -147,6 +151,7 @@ CAN_Frame SetCurrent(uint8_t current) {
     HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, HAL_MAX_DELAY);
 
     response.data[7] = (uint8_t)current_f; // Acknowledge
+    charger_set_targets(end_voltage, set_current);
     return response;
 }
 

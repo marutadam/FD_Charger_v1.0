@@ -35,6 +35,7 @@ extern "C" {
 // Ensure CAN_Frame is defined for uart_send_frame
 #include "mcp2515.h"
 #include "battery_balance.h"
+#include "battery_charge.h"
 #include "flash_param_store.h"
 #include "param_types.h"
 /* USER CODE END Includes */

@@ -49,6 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/can_process.c
     Core/Src/mcp2515.c
     Core/Src/battery_balance.c
+    Core/Src/battery_charge.c
     Core/Src/freertos.c
     Core/Src/stm32f4xx_it.c
     Core/Src/stm32f4xx_hal_msp.c
