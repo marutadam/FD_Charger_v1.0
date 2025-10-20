@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include "param_types.h"
 
 /**
  * Balance a single cell if its voltage exceeds a threshold.
@@ -23,15 +24,7 @@ void balance_cell(uint8_t cell_index, float *cell_voltages, float threshold);
  */
 void balance_all_cells(float *cell_voltages, uint8_t num_cells, float threshold);
 
-/** Configuration for the P regulator with hysteresis and min on-time */
-typedef struct {
-    float Kp;              // proportional gain (duty % per volt)
-    float enable_thresh;   // volts above target to start balancing
-    float disable_thresh;  // volts above target to stop balancing (hysteresis)
-    uint16_t min_on_ms;    // minimum on time in milliseconds
-    uint8_t duty_max;      // maximum duty percent (0-100)
-    float storage_volt;  // voltage to maintain when charging is done
-} BalanceControllerCfg;
+
 
 
 void balance_controller_init(uint8_t cell_index, BalanceControllerCfg cfg);
