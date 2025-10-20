@@ -1,4 +1,5 @@
 #include "main.h"
+#include "param_types.h"
 extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart1;
 #include "can_process.h"
@@ -70,9 +71,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_READ_CURRENT_POWER: 
                 response = ReadCurrentPower();   
                 break;
-            // case CMD_CONFIG_BALANCE:
-            //     response = ConfigBalance(&rxFrame);
-            //     break;
+            case CMD_CONFIG_BALANCE:
+                response = ConfigBalance(rxFrame);
+                break;
             default:
                 // Unknown command
                 return;
@@ -228,21 +229,23 @@ CAN_Frame CreateResponse(CAN_COMMAND cmd) {
     return response;
 }
 
-// CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
-//     CAN_Frame response = CreateResponse(CMD_CONFIG_BALANCE);
-//     char buffer[100];
-//     int len = sprintf(buffer, "[INFO] Balance Config: ");
-//     BalanceControllerCfg cfg;
-//     cfg.enable_thresh = (float)rxFrame->data[2] / 1000.0f; // mV to V
-//     cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
-//     cfg.Kp = (float)(rxFrame->data[4] * 4); 
-//     cfg.duty_max = rxFrame->data[5]; // percent
-//     cfg.min_on_ms = (uint16_t)(rxFrame->data[6] * 100); // ms
-//     cfg.storage_volt = (float)rxFrame->data[7] / 10.0f; // 0.1V to V
+CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
+    CAN_Frame response = CreateResponse(CMD_CONFIG_BALANCE);
+    char buffer[100];
+    int len = sprintf(buffer, "[INFO] Balance Config: ");
+    FlashParams cfg;
+    cfg.enable_thresh = (float)rxFrame->data[2] / 1000.0f; // mV to V
+    cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
+    cfg.Kp = (float)(rxFrame->data[4] * 4); 
+    cfg.duty_max = rxFrame->data[5]; // percent
+    cfg.min_on_ms = (uint16_t)(rxFrame->data[6] * 100); // ms
+    cfg.storage_volt = (float)rxFrame->data[7] / 10.0f; // 0.1V to V
+    cfg.can_id = ParamStore_Read_CAN_ID();
+
+    SaveAllParams(cfg);
     
-//     HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
-//     // Here you would apply the configuration to your balancing controllers
-//     response.data[1] = 0x00; // Acknowledge
-//     return response;
-// }
-// }   
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
+    // Here you would apply the configuration to your balancing controllers
+    response.data[1] = 0x00; // Acknowledge
+    return response;
+}

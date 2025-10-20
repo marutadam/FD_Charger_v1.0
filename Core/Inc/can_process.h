@@ -5,6 +5,7 @@
 #include <stm32f4xx_hal.h>
 #include <stdint.h>
 #include "battery_balance.h"
+#include "param_types.h"
 /* CAN Command Codes (data[0] byte for ID 0x72) */
 typedef enum {
     CMD_CHECK = 0x01,
