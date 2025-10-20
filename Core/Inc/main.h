@@ -36,6 +36,7 @@ extern "C" {
 #include "mcp2515.h"
 #include "battery_balance.h"
 #include "flash_param_store.h"
+#include "param_types.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

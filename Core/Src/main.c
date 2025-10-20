@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "can_process.h"
+#include "param_types.h"
 #include <stdlib.h>
 /* USER CODE END Includes */
 
@@ -287,7 +288,6 @@ int main(void)
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -862,10 +862,19 @@ for (;;) {
                     char msg[32];
                     sprintf(msg, "CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+                    FlashParams params;
+                    params.disable_thresh = 0.25;
+                    params.enable_thresh = 0.5;
+                    params.duty_max = 70;
+                    params.Kp = 1023;
+                    params.min_on_ms = 500;
+                    params.storage_volt = 21.8;
+                    SaveAllParams( params);
                 }
                 // Parse GETID command
                 else if (strcmp(cmd, "GETID") == 0) {
                     uint8_t current_id = Flash_Read_CAN_ID();
+                    PrintAllParamsToUART();
                     char msg[32];
                     sprintf(msg, "CAN_ID is 0x%02X\r\n", current_id);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
