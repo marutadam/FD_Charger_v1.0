@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "battery_balance.h"
 #include "param_types.h"
-/* CAN Command Codes (data[0] byte for ID 0x72) */
+
 typedef enum {
     CMD_CHECK = 0x01,
     CMD_START = 0x02,
@@ -60,7 +60,10 @@ extern volatile uint16_t charged_mah;
 extern volatile uint16_t charging_power;
 extern volatile uint8_t is_battery_present;
 extern volatile BalanceControllerCfg balance_cfg;
-
+extern volatile uint8_t CAN_ID;
+extern volatile float cell_voltages[6];
+extern volatile float end_voltage;
+extern volatile float battery_voltage;
 #ifdef __cplusplus
 }
 #endif
