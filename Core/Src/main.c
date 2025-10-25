@@ -996,18 +996,19 @@ void ChargerTaskHandler(void *argument)
     // if (delay_ms == 0) {
     //   delay_ms = 10;
     // }
-  //  __disable_irq();
-  //   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 1000);
-  //   __enable_irq();
-  //   osDelay(1000); // 1 sekunda
 
-  //   // Wyłącz PWM (ustaw Pulse na 0)
-  //   __disable_irq();
-  //   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
-  //   __enable_irq();
-  //   osDelay(1000); // 1 sekunda
-  osDelay(1000);
-  }
+    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM ON (Pulse=500)\r\n", 29, HAL_MAX_DELAY);
+    // __disable_irq();
+    // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 500);
+    // __enable_irq();
+    // osDelay(500); // 500 ms
+
+    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM OFF (Pulse=0)\r\n", 28, HAL_MAX_DELAY);
+    // __disable_irq();
+    // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
+    // __enable_irq();
+    osDelay(1000); // 1 sekunda
+}
   /* USER CODE END ChargerTaskHandler */
 }
 
@@ -1042,20 +1043,16 @@ void AdcTaskHandler(void *argument)
   }
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
-mux_set_channel(4);
+mux_set_channel(CELL_1);
 
 
   // Infinite loop (or repeat scan if you want)
   for(;;) {
     // Measure voltage on ADS1115 channel 3 (AIN3)
-float voltage = ads1115_read_voltage(&hi2c1, 3);
-
-// Print result via UART as integer and decimal part
-int int_part = (int)voltage;
-int dec_part = (int)((voltage - int_part) * 1000);
-sprintf(msg, "[ADC] MUX=4, ADS1115 CH3 voltage: %d.%03d V\r\n", int_part, dec_part);
-HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-    osDelay(1000);
+        VoltageValues values = ads1115_read_all_voltages(&hi2c1);
+        if(DEBUG_ADC_TASK)
+          print_all_voltages_uart(&values);
+        osDelay(1000);
   }
   /* USER CODE END AdcTaskHandler */
 }
