@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "cmsis_os2.h"
 #include "mcp2515.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -104,7 +105,7 @@ volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
 volatile uint8_t is_battery_present = 1;
-
+    static uint32_t fan_int_count = 0; 
 
 volatile uint8_t rxByte;
 #define CMD_MAX_LEN 64
@@ -131,7 +132,7 @@ volatile uint8_t rxByte;
 static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
 uint8_t Flash_Read_CAN_ID(void);
 
-uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
+volatile uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
 
 /* USER CODE END PV */
 
@@ -221,38 +222,44 @@ int main(void)
   // Read CAN ID from flash on startup
   //CAN_ID = Flash_Read_CAN_ID();
   CAN_ID = ParamStore_Read_CAN_ID();
+  if(DEBUG_INFO){
   char canid_msg[64];
-  sprintf(canid_msg, "Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
+  sprintf(canid_msg, "[INIT] Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
   HAL_UART_Transmit(&huart1, (uint8_t*)canid_msg, strlen(canid_msg), HAL_MAX_DELAY);
-
   // Initialize MCP2515 with 125kbps CAN speed
-  const char* init_msg = "Initializing MCP2515 at 125kbps...\r\n";
+  const char* init_msg = "[INIT] Initializing MCP2515 at 125kbps...\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)init_msg, strlen(init_msg), HAL_MAX_DELAY);
-
+  }
   // Add small delay for MCP2515 power-up
   HAL_Delay(100);
 
   MCP2515_ERROR result = MCP2515_Init(&hspi1, CAN_125KBPS);
 
   if (result == MCP2515_OK) {
-    const char* success_msg = "MCP2515 initialized successfully!\r\n";
+    if(DEBUG_INFO){
+      const char* success_init_msg = "[INIT] MCP2515 initialization successful.\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t*)success_init_msg, strlen(success_init_msg), HAL_MAX_DELAY);
+    }
+    const char* success_msg = "[INIT] MCP2515 initialized successfully!\r\n";
     HAL_UART_Transmit(&huart1, (uint8_t*)success_msg, strlen(success_msg), HAL_MAX_DELAY);
   } else {
-    char error_msg[100];
-    sprintf(error_msg, "MCP2515 initialization failed! Error: %d\r\n", result);
-    HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
-
+    char error_msg[100];  
+      sprintf(error_msg, "[ERROR] MCP2515 initialization failed! Error: %d\r\n", result);
+      HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
     // Try to read a register to test SPI communication
     HAL_Delay(10);
     uint8_t test_read = MCP2515_ReadRegister(&hspi1, MCP2515_CANSTAT);
-    sprintf(error_msg, "CANSTAT register read: 0x%02X\r\n", test_read);
-    HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
-
+    if(DEBUG_INFO) {
+      sprintf(error_msg, "[INIT] CANSTAT register read: 0x%02X\r\n", test_read);
+      HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
+    }
     // Continue anyway to allow debugging
   }
-
-  const char* ready_msg = "Ready to receive CAN messages...\r\n";
+if (DEBUG_INFO) {
+  const char* ready_msg = "[INIT] Ready to receive CAN messages...\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)ready_msg, strlen(ready_msg), HAL_MAX_DELAY);
+}
+
 
   /* USER CODE END 2 */
 
@@ -282,15 +289,26 @@ int main(void)
   /* Create the thread(s) */
   /* creation of uartTask */
   uartTaskHandle = osThreadNew(UartTask, NULL, &uartTask_attributes);
+  if (uartTaskHandle == NULL) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] UART thread error!\r\n", 29, HAL_MAX_DELAY);
+  }
 
   /* creation of canTask */
   canTaskHandle = osThreadNew(CanTaskHandler, NULL, &canTask_attributes);
-
+if (canTaskHandle == NULL) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] CAN thread error!\r\n", 28, HAL_MAX_DELAY);
+}
   /* creation of chargerTask */
   chargerTaskHandle = osThreadNew(ChargerTaskHandler, NULL, &chargerTask_attributes);
+  if (chargerTaskHandle == NULL) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] Charger thread error!\r\n", 32, HAL_MAX_DELAY);
+  }
 
   /* creation of adcTask */
   adcTaskHandle = osThreadNew(AdcTaskHandler, NULL, &adcTask_attributes);
+  if (adcTaskHandle == NULL) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] ADC thread error!\r\n", 28, HAL_MAX_DELAY);
+}
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -523,7 +541,7 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 333;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -558,7 +576,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 9;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 4999;
+  htim3.Init.Period = 9999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -572,24 +590,24 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 1500;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 2000;
+  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 3000;
+  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 20000;
+  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
@@ -636,14 +654,14 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 2003;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 2004;
+  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
@@ -723,7 +741,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = BUILTIN_LED_Pin|LED_WS2812C_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CAN_PROG_BTN_Pin */
@@ -732,11 +750,17 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(CAN_PROG_BTN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : FAN_TACH_Pin SPI_INT_Pin */
-  GPIO_InitStruct.Pin = FAN_TACH_Pin|SPI_INT_Pin;
+  /*Configure GPIO pin : FAN_TACH_Pin */
+  GPIO_InitStruct.Pin = FAN_TACH_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(FAN_TACH_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SPI_INT_Pin */
+  GPIO_InitStruct.Pin = SPI_INT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(SPI_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SPI_CS_Pin */
   GPIO_InitStruct.Pin = SPI_CS_Pin;
@@ -764,6 +788,9 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
 
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -777,43 +804,6 @@ static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel)
   }
 }
 
-// 💾 Zapis wartości (0x71–0x76)
-void Flash_Save_CAN_ID(uint8_t id)
-{
-  HAL_FLASH_Unlock();
-
-  // Flash można tylko kasować sektorami, więc przed zapisem kasujemy 1 sektor
-  FLASH_EraseInitTypeDef eraseInit;
-  uint32_t sectorError;
-
-  eraseInit.TypeErase = FLASH_TYPEERASE_SECTORS;
-  eraseInit.Sector = FLASH_SECTOR_7;           // ostatni sektor
-  eraseInit.NbSectors = 1;
-  eraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;
-
-  if (HAL_FLASHEx_Erase(&eraseInit, &sectorError) != HAL_OK) {
-    HAL_FLASH_Lock();
-    return;
-  }
-
-  // zapisujemy 1 bajt jako słowo (bo Flash zapisuje słowami)
-  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_ADDR_CAN_ID, id);
-
-  HAL_FLASH_Lock();
-}
-
-// 🔍 Odczyt wartości z Flash
-uint8_t Flash_Read_CAN_ID(void)
-{
-  uint8_t id = *(uint8_t*)FLASH_ADDR_CAN_ID;
-
-  // jeśli Flash czysty → 0xFF
-  if (id < 0x71 || id > 0x76)
-    id = 0x71;  // domyślny adres
-
-  return id;
-}
-
 
 /**
   * @brief  EXTI line detection callback
@@ -822,6 +812,19 @@ uint8_t Flash_Read_CAN_ID(void)
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+        // char msg[64];
+
+      
+  if (GPIO_Pin == FAN_TACH_Pin) {
+    fan_int_count++;
+    if (fan_int_count % 100 == 0) {
+      HAL_GPIO_TogglePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin);
+      // char msg[64];
+      // sprintf(msg, "FAN INT occurred %lu times\r\n", fan_int_count);
+      // HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+  }
+
   if (GPIO_Pin == GPIO_PIN_3) {
     // MCP2515 INT pin triggered - notify CAN task
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -837,7 +840,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
    // Toggle onboard LED (PC13) on each received byte
-    HAL_GPIO_TogglePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin);
 
 
  if (huart->Instance == USART1) {
@@ -848,7 +850,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
   }
 }
-
+void EXTI2_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_UartTask */
@@ -866,6 +871,10 @@ void UartTask(void *argument)
     char cmd[CMD_MAX_LEN];
     uint8_t idx = 0;
     uint8_t last_was_eol = 0;
+
+    if (DEBUG_UART_TASK) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] UART Task started\r\n", 26, HAL_MAX_DELAY);
+}
 for (;;) {
     if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, osWaitForever) == osOK) {
         if ((c == '\r' || c == '\n')) {
@@ -873,33 +882,25 @@ for (;;) {
                 cmd[idx] = '\0';
 
                 // Parse SETID command
-                if (strncmp(cmd, "SETID=0x", 8) == 0 && strlen(cmd) == 10) {
+                if ((strncmp(cmd, "SETID=0x", 8) == 0 || strncmp(cmd, "SETID=0X", 8) == 0) && strlen(cmd) == 10) {
                     uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
                     ParamStore_Save_CAN_ID(new_id);
                     CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
                     char msg[32];
-                    sprintf(msg, "CAN_ID set to 0x%02X\r\n", CAN_ID);
+                    sprintf(msg, "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-                    FlashParams params;
-                    params.disable_thresh = 0.25;
-                    params.enable_thresh = 0.5;
-                    params.duty_max = 70;
-                    params.Kp = 1023;
-                    params.min_on_ms = 500;
-                    params.storage_volt = 21.8;
-                    SaveAllParams( params);
                 }
                 // Parse GETID command
                 else if (strcmp(cmd, "GETID") == 0) {
-                    uint8_t current_id = Flash_Read_CAN_ID();
+                    uint8_t current_id = ParamStore_Read_CAN_ID();
                     PrintAllParamsToUART();
                     char msg[32];
-                    sprintf(msg, "CAN_ID is 0x%02X\r\n", current_id);
+                    sprintf(msg, "[RESPONSE] CAN_ID is 0x%02X\r\n", current_id);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
                 }
                 else {
                     // Respond with error for unknown command
-                    const char *err_msg = "[ERROR] Unknown command\r\n";
+                    const char *err_msg = "[RESPONSE] Unknown command\r\n";
                     HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
                 }
                 idx = 0;
@@ -930,7 +931,7 @@ void CanTaskHandler(void *argument)
   char uart_buffer[100];
   
   // Send startup message
-  const char* task_start = "[CAN] Task started\r\n";
+  const char* task_start = "[INIT] CAN Task started\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
   
   
@@ -944,8 +945,7 @@ void CanTaskHandler(void *argument)
     while (MCP2515_CheckReceive(&hspi1)) {
         // Read CAN message
         if (MCP2515_ReadMessage(&hspi1, &rxFrame) == MCP2515_OK) {
-      // Toggle LED to indicate message received
-      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+
 
     // Modular CAN frame processing
     ProcessCanFrame(&rxFrame);
@@ -981,22 +981,32 @@ void ChargerTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    ChargerMeasurements meas;
-    meas.pack_voltage = battery_voltage;
-    meas.charge_current = charging_current;
-    float max_cell = cell_voltages[0];
-    for (uint8_t i = 1; i < 6; ++i) {
-      if (cell_voltages[i] > max_cell) {
-        max_cell = cell_voltages[i];
-      }
-    }
-    meas.max_cell_voltage = max_cell;
-    charger_update(&meas);
-    uint16_t delay_ms = charger_get_update_period_ms();
-    if (delay_ms == 0) {
-      delay_ms = 10;
-    }
-    osDelay(delay_ms);
+    // ChargerMeasurements meas;
+    // meas.pack_voltage = battery_voltage;
+    // meas.charge_current = charging_current;
+    // float max_cell = cell_voltages[0];
+    // for (uint8_t i = 1; i < 6; ++i) {
+    //   if (cell_voltages[i] > max_cell) {
+    //     max_cell = cell_voltages[i];
+    //   }
+    // }
+    // meas.max_cell_voltage = max_cell;
+    // charger_update(&meas);
+    // uint16_t delay_ms = charger_get_update_period_ms();
+    // if (delay_ms == 0) {
+    //   delay_ms = 10;
+    // }
+  //  __disable_irq();
+  //   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 1000);
+  //   __enable_irq();
+  //   osDelay(1000); // 1 sekunda
+
+  //   // Wyłącz PWM (ustaw Pulse na 0)
+  //   __disable_irq();
+  //   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
+  //   __enable_irq();
+  //   osDelay(1000); // 1 sekunda
+  osDelay(1000);
   }
   /* USER CODE END ChargerTaskHandler */
 }
@@ -1011,10 +1021,41 @@ void ChargerTaskHandler(void *argument)
 void AdcTaskHandler(void *argument)
 {
   /* USER CODE BEGIN AdcTaskHandler */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
+  char msg[64];
+  uint8_t found = 0;
+  // Scan I2C addresses 0x03 to 0x77
+  HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] AdcTaskHandler started\r\n", 30, HAL_MAX_DELAY);
+  for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
+    if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
+      int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+      if (addr == 0x48) {
+        found = 1;
+      }
+    }
+    osDelay(2);
+  }
+  if (found) {
+    sprintf(msg, "[ADC] ADS1115 detected at 0x48!\r\n");
+  } else {
+    sprintf(msg, "[ERROR] ADS1115 NOT detected!\r\n");
+  }
+  HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+mux_set_channel(4);
+
+
+  // Infinite loop (or repeat scan if you want)
+  for(;;) {
+    // Measure voltage on ADS1115 channel 3 (AIN3)
+float voltage = ads1115_read_voltage(&hi2c1, 3);
+
+// Print result via UART as integer and decimal part
+int int_part = (int)voltage;
+int dec_part = (int)((voltage - int_part) * 1000);
+sprintf(msg, "[ADC] MUX=4, ADS1115 CH3 voltage: %d.%03d V\r\n", int_part, dec_part);
+HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    osDelay(1000);
   }
   /* USER CODE END AdcTaskHandler */
 }
@@ -1050,7 +1091,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   char uart_buffer[100];
-  int len = sprintf(uart_buffer, "PWM Error!\r\n");
+  int len = sprintf(uart_buffer, "[ERROR] PWM Error!\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
   __disable_irq();
   while (1)
@@ -1074,3 +1115,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+

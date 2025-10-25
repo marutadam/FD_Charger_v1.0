@@ -22,6 +22,7 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
+// #include "can_process.h"
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,9 @@ extern "C" {
 #include "battery_charge.h"
 #include "flash_param_store.h"
 #include "param_types.h"
+#include "adc_mux.h" 
+#include "stm32f4xx_hal_gpio.h"
+#include "ws2812c.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -100,6 +104,13 @@ void Error_Handler(void);
 #define FLASH_ADDR_CAN_ID  0x0807FFF0
 
 
+//Debugging macros
+#define DEBUG_INFO 1
+#define DEBUG_UART_TASK     1
+#define DEBUG_CAN_TASK      1
+#define DEBUG_CHARGER_TASK  1
+#define DEBUG_ADC_TASK      1
+
 #ifdef __cplusplus
 }
 #endif
@@ -108,7 +119,7 @@ void Error_Handler(void);
 
 // Externs for CAN processing module
 extern UART_HandleTypeDef huart1;
-extern uint8_t CAN_ID;
+extern volatile uint8_t CAN_ID;
 extern volatile float end_voltage;
 extern volatile float set_current;
 extern volatile float battery_voltage;
