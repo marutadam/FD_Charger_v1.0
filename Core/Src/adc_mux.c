@@ -6,9 +6,10 @@
 #define PARALLEL(r1, r2) (1.0f / (((1.0f) / (r1)) + ((1.0f) / (r2))))
 #define DIVIDER_SCALE(rt, rb) (((rt) + (rb)) / (rb))
 
-// Voltage divider scaling factors (top resistor, bottom resistor) per schematic
-// CELL1: R1=4.3k, R2=10k; CELL2: R3=18k, R4=10k; ...
-static const float cell_bottom_resistance = PARALLEL(10000.0f, 2200.0f);
+// Voltage divider scaling factors (top resistor, bottom resistor) per schematic.
+// The effective bottom resistor is 10k for each channel; the 2.2k resistor on the
+// common output is handled separately in hardware and is not treated as parallel here.
+static const float cell_bottom_resistance = 10000.0f;
 static const float cell_divider_scale[6] = {
     DIVIDER_SCALE(4300.0f, cell_bottom_resistance),
     DIVIDER_SCALE(18000.0f, cell_bottom_resistance),
@@ -20,12 +21,7 @@ static const float cell_divider_scale[6] = {
 // Optional per-cell calibration gains to compensate for hardware tolerances.
 // Values of 1.0f leave the reading unchanged.
 static const float cell_calibration_gain[6] = {
-    0.2110f, // adjust CELL1 to read ~2.0 V when raw = 32750
-    1.0f,
-    1.0f,
-    1.0f,
-    1.0f,
-    1.0f
+    0.995f, 0.997f, 0.996f, 0.978f, 1.032f, 0.984f
 };
 
 // AIN1 (buck) and AIN0/AIN2 (current sense high & battery) all use 91k/10k dividers
@@ -33,9 +29,23 @@ static const float buck_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float battery_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float current_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 
-static inline float ads1115_raw_to_voltage(int16_t raw)
+static const float pga_full_scale_table[] = {
+    6.144f,
+    4.096f,
+    2.048f,
+    1.024f,
+    0.512f,
+    0.256f
+};
+
+static inline float ads1115_raw_to_voltage(int16_t raw, ADS1115_PGA pga)
 {
-    return (float)raw * 6.144f / 32768.0f;
+    uint8_t idx = (uint8_t)pga;
+    if (idx >= sizeof(pga_full_scale_table)/sizeof(pga_full_scale_table[0])) {
+        idx = sizeof(pga_full_scale_table)/sizeof(pga_full_scale_table[0]) - 1;
+    }
+    float full_scale = pga_full_scale_table[idx];
+    return (float)raw * full_scale / 32768.0f;
 }
 
 void mux_set_channel(uint8_t channel)
@@ -47,10 +57,11 @@ void mux_set_channel(uint8_t channel)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, (channel & 0x04) ? GPIO_PIN_SET : GPIO_PIN_RESET); // C
 }
 
-int16_t ads1115_read_voltage(I2C_HandleTypeDef *hi2c, uint8_t channel)
+int16_t ads1115_read_voltage(I2C_HandleTypeDef *hi2c, uint8_t channel, ADS1115_PGA pga)
 {
     // Set config for single-shot, single-ended channel (AINx vs GND)
-    uint16_t config = 0x8483;              // OS=1, PGA=±6.144V, MODE=single-shot, 128 SPS
+    uint16_t config = 0x8183;              // OS=1, PGA bits cleared, MODE=single-shot, 128 SPS
+    config |= ((uint16_t)pga & 0x07) << 9; // apply PGA selection
     config &= ~0x7000;                     // clear MUX bits
     config |= 0x4000 | ((channel & 0x03) << 12); // select AINx single-ended (0b100 + channel)
     uint8_t config_bytes[3] = {0x01, config >> 8, config & 0xFF};
@@ -73,6 +84,7 @@ static void readCells(I2C_HandleTypeDef *hi2c, float *cells, int16_t *rawCells)
 {
     float node_voltage[6] = {0};
     const char *debug_header = "[ADC][DBG] ";
+    const ADS1115_PGA cell_pga = ADS1115_PGA_4V096;
     for (uint8_t ch = 0; ch < 6; ch++) {
         switch (ch) {
             case 0: mux_set_channel(CELL_1); break;
@@ -85,8 +97,8 @@ static void readCells(I2C_HandleTypeDef *hi2c, float *cells, int16_t *rawCells)
         }
                 osDelay(50);
 
-        int16_t raw = ads1115_read_voltage(hi2c, 3);
-        float sense_voltage = ads1115_raw_to_voltage(raw);
+        int16_t raw = ads1115_read_voltage(hi2c, 3, cell_pga);
+        float sense_voltage = ads1115_raw_to_voltage(raw, cell_pga);
         node_voltage[ch] = sense_voltage * cell_divider_scale[ch];
 
         if (rawCells != NULL) {
@@ -113,8 +125,9 @@ static void readCells(I2C_HandleTypeDef *hi2c, float *cells, int16_t *rawCells)
 
 static float readBatteryVoltage(I2C_HandleTypeDef *hi2c, float *divider_voltage)
 {
-    int16_t raw = ads1115_read_voltage(hi2c, 2);
-    float sense_voltage = ads1115_raw_to_voltage(raw);
+    const ADS1115_PGA battery_pga = ADS1115_PGA_4V096;
+    int16_t raw = ads1115_read_voltage(hi2c, 2, battery_pga);
+    float sense_voltage = ads1115_raw_to_voltage(raw, battery_pga);
     if (divider_voltage != NULL) {
         *divider_voltage = sense_voltage;
     }
@@ -123,15 +136,17 @@ static float readBatteryVoltage(I2C_HandleTypeDef *hi2c, float *divider_voltage)
 
 static float readBuck(I2C_HandleTypeDef *hi2c)
 {
-    int16_t raw = ads1115_read_voltage(hi2c, 1);
-    float sense_voltage = ads1115_raw_to_voltage(raw);
+    const ADS1115_PGA buck_pga = ADS1115_PGA_4V096;
+    int16_t raw = ads1115_read_voltage(hi2c, 1, buck_pga);
+    float sense_voltage = ads1115_raw_to_voltage(raw, buck_pga);
     return sense_voltage * buck_divider_scale;
 }
 
 static float readCurrent(I2C_HandleTypeDef *hi2c, float battery_divider_voltage)
 {
-    int16_t raw_current = ads1115_read_voltage(hi2c, 0);
-    float current_high_voltage = ads1115_raw_to_voltage(raw_current);
+    const ADS1115_PGA current_pga = ADS1115_PGA_4V096;
+    int16_t raw_current = ads1115_read_voltage(hi2c, 0, current_pga);
+    float current_high_voltage = ads1115_raw_to_voltage(raw_current, current_pga);
     float shunt_voltage = (current_high_voltage - battery_divider_voltage) * current_divider_scale;
     float shunt_resistance = 0.025f; // Effective shunt resistance (4x 0.1 ohm in parallel)
     float current_voltage = shunt_voltage;
