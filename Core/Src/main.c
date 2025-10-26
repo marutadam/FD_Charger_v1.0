@@ -108,6 +108,7 @@ volatile uint8_t is_battery_present = 1;
     static uint32_t fan_int_count = 0; 
 
 volatile uint8_t rxByte;
+VoltageValues current_battery_voltages;
 #define CMD_MAX_LEN 64
 
 
@@ -640,7 +641,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 9;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 4999;
+  htim4.Init.Period = 9999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
@@ -997,17 +998,17 @@ void ChargerTaskHandler(void *argument)
     //   delay_ms = 10;
     // }
 
-    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM ON (Pulse=500)\r\n", 29, HAL_MAX_DELAY);
+    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM ON (Pulse=3000)\r\n", 30, HAL_MAX_DELAY);
     // __disable_irq();
-    // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 500);
+    // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 3000);
     // __enable_irq();
-    // osDelay(500); // 500 ms
+    // osDelay(300); // 300 ms
 
     // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM OFF (Pulse=0)\r\n", 28, HAL_MAX_DELAY);
     // __disable_irq();
-    // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
+    // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
     // __enable_irq();
-    osDelay(1000); // 1 sekunda
+    osDelay(2000); // 2000 ms
 }
   /* USER CODE END ChargerTaskHandler */
 }
@@ -1049,9 +1050,14 @@ mux_set_channel(CELL_1);
   // Infinite loop (or repeat scan if you want)
   for(;;) {
     // Measure voltage on ADS1115 channel 3 (AIN3)
-        VoltageValues values = ads1115_read_all_voltages(&hi2c1);
+        current_battery_voltages = ads1115_read_all_voltages(&hi2c1);
+        if (current_battery_voltages.battery_voltage>12.0f){
+            is_battery_present = 1;
+        } else {
+            is_battery_present = 0;
+        }
         if(DEBUG_ADC_TASK)
-          print_all_voltages_uart(&values);
+          print_all_voltages_uart(&current_battery_voltages);
         osDelay(1000);
   }
   /* USER CODE END AdcTaskHandler */
