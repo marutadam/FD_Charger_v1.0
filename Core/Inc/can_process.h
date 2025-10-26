@@ -64,6 +64,7 @@ extern volatile uint8_t CAN_ID;
 extern volatile float cell_voltages[6];
 extern volatile float end_voltage;
 extern volatile float battery_voltage;
+extern VoltageValues current_battery_voltages;
 #ifdef __cplusplus
 }
 #endif

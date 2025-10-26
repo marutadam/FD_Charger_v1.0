@@ -178,14 +178,14 @@ CAN_Frame IsBatteryPresent() {
 CAN_Frame ReadCurrentVoltage() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
     for (int i = 1; i < 7; i++) {
-        float v = cell_voltages[i-1];
+        float v = current_battery_voltages.cell[i-1];
         // Encode: byte_value = (voltage - 1.80) / 0.01
         int byte_value = (uint8_t)((v - 1.80f) * 100.0f);
         if (byte_value < 0) byte_value = 0;
         if (byte_value > 255) byte_value = 255;
         response.data[i] = (uint8_t)byte_value;
     }
-    response.data[7] = (uint8_t)(battery_voltage * 10.0f);
+    response.data[7] = (uint8_t)(current_battery_voltages.battery_voltage * 10.0f);
     return response;
 }
 
