@@ -11,7 +11,14 @@
 
 extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim4;
-
+CellPwmConfig battery_cell[6]={
+    {&htim3, TIM_CHANNEL_3}, // CELL1 -> TIM3_CH1
+    {&htim3, TIM_CHANNEL_4}, // CELL2 -> TIM3_CH2
+    {&htim3, TIM_CHANNEL_1}, // CELL3 -> TIM3_CH3
+    {&htim3, TIM_CHANNEL_2}, // CELL4 -> TIM3_CH4
+    {&htim4, TIM_CHANNEL_1}, // CELL5 -> TIM4_CH1
+    {&htim4, TIM_CHANNEL_2}  // CELL6 -> TIM4_CH2
+}; // Configuration for PWM timers/channels for each cell
 // Example: Balance a single cell if voltage exceeds threshold
 void balance_cell(uint8_t cell_index, float *cell_voltages, float threshold) {
     if (cell_voltages[cell_index] > threshold) {
