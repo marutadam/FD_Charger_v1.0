@@ -8,6 +8,8 @@
 #include "main.h"
 #include "stm32f4xx_hal.h"
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 
 extern TIM_HandleTypeDef htim2;
 
@@ -28,6 +30,30 @@ static ChargerController charger = {0};
 
 static void charger_apply_pwm(float duty_percent);
 static void charger_reset_integrators(void);
+
+void charger_fault_clear_all(void) {
+    charger_faults.overvoltage = false;
+    charger_faults.overcurrent = false;
+    charger_faults.timeout = false;
+    charger_faults.cell_imbalance = false;
+    charger_faults.battery_not_present = false;
+    charger_faults.temp_high = false;
+    charger_faults.temp_low = false;
+    charger_faults.fan_error = false;
+    charger_faults.unknown = false;
+}
+
+bool charger_fault_any(void) {
+    return charger_faults.overvoltage ||
+           charger_faults.overcurrent ||
+           charger_faults.timeout ||
+           charger_faults.cell_imbalance ||
+           charger_faults.battery_not_present ||
+           charger_faults.temp_high ||
+           charger_faults.temp_low ||
+           charger_faults.fan_error ||
+           charger_faults.unknown;
+}
 
 void charger_controller_init(ChargerControllerCfg cfg) {
     charger.cfg = cfg;
@@ -52,6 +78,7 @@ void charger_controller_init(ChargerControllerCfg cfg) {
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
     charger_apply_pwm(0.0f);
+    charger_fault_clear_all();
 }
 
 void charger_set_targets(float target_voltage, float target_current) {
@@ -110,8 +137,14 @@ void charger_update(const ChargerMeasurements *meas) {
         dt = 0.5f;
     }
 
+    bool overvoltage_fault = false;
     if (charger.cfg.cell_overvoltage_limit > 0.0f &&
         meas->max_cell_voltage >= charger.cfg.cell_overvoltage_limit) {
+        overvoltage_fault = true;
+    }
+    charger_faults.overvoltage = overvoltage_fault;
+
+    if (overvoltage_fault) {
         charger.enabled = 0;
         charger.state = CHARGER_STATE_FAULT;
         charger.duty = 0.0f;
@@ -226,4 +259,29 @@ static void charger_apply_pwm(float duty_percent) {
 static void charger_reset_integrators(void) {
     charger.current_integrator = 0.0f;
     charger.voltage_integrator = 0.0f;
+}
+
+#define FAN_PULSES_PER_REV 2 // Check your fan's datasheet!
+
+void CalculateFanRPM(void)
+{
+    static uint32_t last_fan_int_count = 0;
+    uint32_t pulses = fan_int_count - last_fan_int_count;
+    last_fan_int_count = fan_int_count;
+
+    // If called every 1 second:
+    fan_rpm = (pulses / FAN_PULSES_PER_REV) * 60; // measurement_time = 1s
+    charger_faults.fan_error = (fan_rpm < 1000U);
+    
+    // Print to UART
+    char msg[64];
+    int len = snprintf(msg, sizeof(msg),
+                       "[FAN] Speed: %lu RPM\r\nFault fan:%d any:%d\r\n",
+                       fan_rpm,
+                       charger_faults.fan_error ? 1 : 0,
+                       charger_fault_any() ? 1 : 0);
+    if (len < 0) {
+        return;
+    }
+    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }

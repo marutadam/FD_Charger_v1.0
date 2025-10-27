@@ -7,11 +7,13 @@
 #ifndef BATTERY_CHARGE_H
 #define BATTERY_CHARGE_H
 
+#include "stm32f4xx_hal.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef enum {
     CHARGER_STATE_IDLE = 0,
@@ -20,6 +22,18 @@ typedef enum {
     CHARGER_STATE_COMPLETE,
     CHARGER_STATE_FAULT
 } ChargerState;
+
+typedef struct {
+    bool overvoltage;
+    bool overcurrent;
+    bool timeout;
+    bool cell_imbalance;
+    bool battery_not_present;
+    bool temp_high;
+    bool temp_low;
+    bool fan_error;
+    bool unknown;
+} ChargerFaultStatus;
 
 typedef struct {
     float current_kp;            // proportional gain for current loop
@@ -47,13 +61,17 @@ void charger_set_targets(float target_voltage, float target_current);
 void charger_enable(void);
 void charger_disable(void);
 void charger_update(const ChargerMeasurements *meas);
+void charger_fault_clear_all(void);
+bool charger_fault_any(void);
 
 ChargerState charger_get_state(void);
 float charger_get_pwm_duty(void);
 uint16_t charger_get_update_period_ms(void);
+void CalculateFanRPM(void);
 
-#ifdef __cplusplus
-}
-#endif
+// Fan RPM measurement variables defined in main.c
+extern volatile uint32_t fan_int_count;
+extern volatile uint32_t fan_rpm;
+extern volatile ChargerFaultStatus charger_faults;
 
 #endif // BATTERY_CHARGE_H
