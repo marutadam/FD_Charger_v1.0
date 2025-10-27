@@ -105,7 +105,11 @@ volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
 volatile uint8_t is_battery_present = 1;
-    static uint32_t fan_int_count = 0; 
+
+volatile ChargerFaultStatus charger_faults = {0};
+//Fan RPM measurement variables
+volatile uint32_t fan_int_count = 0;
+volatile uint32_t fan_rpm = 0;
 
 volatile uint8_t rxByte;
 VoltageValues current_battery_voltages;
@@ -818,12 +822,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       
   if (GPIO_Pin == FAN_TACH_Pin) {
     fan_int_count++;
-    if (fan_int_count % 100 == 0) {
-      HAL_GPIO_TogglePin(BUILTIN_LED_GPIO_Port, BUILTIN_LED_Pin);
-      // char msg[64];
-      // sprintf(msg, "FAN INT occurred %lu times\r\n", fan_int_count);
-      // HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-    }
   }
 
   if (GPIO_Pin == GPIO_PIN_3) {
@@ -1001,13 +999,20 @@ void ChargerTaskHandler(void *argument)
     // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM ON (Pulse=3000)\r\n", 30, HAL_MAX_DELAY);
     // __disable_irq();
     // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 3000);
-    // __enable_irq();
-    // osDelay(300); // 300 ms
+    // // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 3000);
+    // // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 3000);
 
-    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM OFF (Pulse=0)\r\n", 28, HAL_MAX_DELAY);
+
+    // __enable_irq();
+    // osDelay(1000); // 1000 ms
+
+    // // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM OFF (Pulse=0)\r\n", 28, HAL_MAX_DELAY);
     // __disable_irq();
     // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+    // // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
+    // // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
     // __enable_irq();
+    CalculateFanRPM();
     osDelay(2000); // 2000 ms
 }
   /* USER CODE END ChargerTaskHandler */
@@ -1058,7 +1063,7 @@ mux_set_channel(CELL_1);
         }
         if(DEBUG_ADC_TASK)
           print_all_voltages_uart(&current_battery_voltages);
-        osDelay(1000);
+        osDelay(100);
   }
   /* USER CODE END AdcTaskHandler */
 }

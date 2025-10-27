@@ -109,7 +109,7 @@ void Error_Handler(void);
 #define DEBUG_UART_TASK     1
 #define DEBUG_CAN_TASK      1
 #define DEBUG_CHARGER_TASK  1
-#define DEBUG_ADC_TASK      1
+#define DEBUG_ADC_TASK      0
 
 #ifdef __cplusplus
 }
@@ -126,3 +126,4 @@ extern volatile float battery_voltage;
 extern volatile float cell_voltages[6];
 void uart_send_frame(const char *prefix, CAN_Frame *frame);
 void ProcessCanFrame(CAN_Frame *rxFrame);
+
