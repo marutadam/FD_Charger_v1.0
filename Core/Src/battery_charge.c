@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 
+
+#define FAN_PULSES_PER_REV 2 
+
 extern TIM_HandleTypeDef htim2;
 
 typedef struct {
@@ -261,7 +264,6 @@ static void charger_reset_integrators(void) {
     charger.voltage_integrator = 0.0f;
 }
 
-#define FAN_PULSES_PER_REV 2 // Check your fan's datasheet!
 
 void CalculateFanRPM(void)
 {
@@ -273,15 +275,5 @@ void CalculateFanRPM(void)
     fan_rpm = (pulses / FAN_PULSES_PER_REV) * 60; // measurement_time = 1s
     charger_faults.fan_error = (fan_rpm < 1000U);
     
-    // Print to UART
-    char msg[64];
-    int len = snprintf(msg, sizeof(msg),
-                       "[FAN] Speed: %lu RPM\r\nFault fan:%d any:%d\r\n",
-                       fan_rpm,
-                       charger_faults.fan_error ? 1 : 0,
-                       charger_fault_any() ? 1 : 0);
-    if (len < 0) {
-        return;
-    }
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
 }

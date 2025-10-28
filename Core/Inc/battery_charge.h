@@ -50,6 +50,7 @@ typedef struct {
     uint16_t update_period_ms;   // nominal control update period
 } ChargerControllerCfg;
 
+
 typedef struct {
     float pack_voltage;      // measured pack voltage (V)
     float charge_current;    // measured charge current (A)
@@ -73,5 +74,11 @@ void CalculateFanRPM(void);
 extern volatile uint32_t fan_int_count;
 extern volatile uint32_t fan_rpm;
 extern volatile ChargerFaultStatus charger_faults;
+extern volatile float end_voltage;
+extern volatile float set_current;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // BATTERY_CHARGE_H
