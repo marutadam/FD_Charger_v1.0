@@ -98,13 +98,13 @@ const osMessageQueueAttr_t uartRxQueue_attributes = {
 // Global variables to store settings
 volatile float end_voltage = 0.0f;
 volatile float set_current = 0.0f;
-volatile float battery_voltage = 20.0f;  // Current battery voltage
-volatile float cell_voltages[6] = {3.5f, 3.6f, 3.55f, 3.58f, 3.52f, 3.54f};  // Individual cell voltages (for testing)
 volatile uint8_t system_state = 0x03; // 0x00 = System ok, 0x0X = error codes
 volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
 volatile uint8_t is_battery_present = 1;
+volatile bool is_battery_charging = false;
+
 
 volatile ChargerFaultStatus charger_faults = {0};
 //Fan RPM measurement variables
@@ -976,51 +976,75 @@ void CanTaskHandler(void *argument)
 /* USER CODE END Header_ChargerTaskHandler */
 void ChargerTaskHandler(void *argument)
 {
+  int16_t pwm_value = 300;
   /* USER CODE BEGIN ChargerTaskHandler */
   /* Infinite loop */
   for(;;)
   {
-    // ChargerMeasurements meas;
-    // meas.pack_voltage = battery_voltage;
-    // meas.charge_current = charging_current;
-    // float max_cell = cell_voltages[0];
-    // for (uint8_t i = 1; i < 6; ++i) {
-    //   if (cell_voltages[i] > max_cell) {
-    //     max_cell = cell_voltages[i];
-    //   }
-    // }
-    // meas.max_cell_voltage = max_cell;
-    // charger_update(&meas);
-    // uint16_t delay_ms = charger_get_update_period_ms();
-    // if (delay_ms == 0) {
-    //   delay_ms = 10;
-    // }
 
-    // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM ON (Pulse=3000)\r\n", 30, HAL_MAX_DELAY);
-    // __disable_irq();
-    // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 3000);
-    // // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 3000);
-    // // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 3000);
+  if (!is_battery_present){
+    pwm_value=0;
+  }
+  else {
+  if (is_battery_charging){
+   // UpdateCharging();
+  }
+  else {
+   // StartCharging();
+    pwm_value=0;
+  }
+    char msg[64];
+    if(current_battery_voltages.current<2.0){
+    sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
+    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
+    __enable_irq();
+        pwm_value+=1;
+    }
+    else if(current_battery_voltages.current>7.0){
+      pwm_value-=50;
+      if(pwm_value<0)
+        pwm_value=0;
+      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
 
+      __enable_irq();
+    }
+    else if(current_battery_voltages.current>5.0){
+      pwm_value-=20;
+      if(pwm_value<0)
+        pwm_value=0;
+      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
 
-    // __enable_irq();
-    // osDelay(1000); // 1000 ms
+      __enable_irq();
+    }
+    else if (current_battery_voltages.current>2.2){
+      pwm_value-=1;
+      if(pwm_value<0)
+        pwm_value=0;
+      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
+      __enable_irq();
+    }
+    
 
-    // // HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] PWM OFF (Pulse=0)\r\n", 28, HAL_MAX_DELAY);
-    // __disable_irq();
-    // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
-    // // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
-    // // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
-    // __enable_irq();
     CalculateFanRPM();
-    osDelay(2000); // 2000 ms
+    osDelay(1000); // 2000 ms
 }
   /* USER CODE END ChargerTaskHandler */
 }
-
+}
 /* USER CODE BEGIN Header_AdcTaskHandler */
 /**
-* @brief Function implementing the adcTask thread.
+* @brief Function implementing the adscTask thread.
 * @param argument: Not used
 * @retval None
 */
@@ -1048,22 +1072,41 @@ void AdcTaskHandler(void *argument)
     sprintf(msg, "[ERROR] ADS1115 NOT detected!\r\n");
   }
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-mux_set_channel(CELL_1);
-
-
   // Infinite loop (or repeat scan if you want)
-  for(;;) {
-    // Measure voltage on ADS1115 channel 3 (AIN3)
-        current_battery_voltages = ads1115_read_all_voltages(&hi2c1);
-        if (current_battery_voltages.battery_voltage>12.0f){
-            is_battery_present = 1;
-        } else {
-            is_battery_present = 0;
-        }
-        if(DEBUG_ADC_TASK)
-          print_all_voltages_uart(&current_battery_voltages);
-        osDelay(100);
+  for (;;) {
+    current_battery_voltages = ads1115_read_all_voltages(&hi2c1);
+    is_battery_present = (current_battery_voltages.battery_voltage > 12.0f) ? 1U : 0U;
+
+    if (current_battery_voltages.buck_voltage > 26.0f) {
+      HAL_UART_Transmit(&huart1,
+                        (const uint8_t *)"[ERROR] Buck voltage to high!",
+                        30,
+                        HAL_MAX_DELAY);
+      __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+      __enable_irq();
+    }
+
+    if (charger_faults.fan_error) {
+      HAL_UART_Transmit(&huart1,
+                        (const uint8_t *)"[ERROR] Fan error detected!",
+                        27,
+                        HAL_MAX_DELAY);
+      __disable_irq();
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
+      __enable_irq();
+    }
+
+    if (DEBUG_ADC_TASK) {
+      print_all_voltages_uart(&current_battery_voltages);
+    }
+    osDelay(50);
   }
   /* USER CODE END AdcTaskHandler */
 }
