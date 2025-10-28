@@ -31,11 +31,11 @@ static const float current_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 
 static const float pga_full_scale_table[] = {
     6.144f,
-    4.096f,
+    4.096f, //dla celli
     2.048f,
     1.024f,
     0.512f,
-    0.256f
+    0.256f //dla shunta
 };
 
 static inline float ads1115_raw_to_voltage(int16_t raw, ADS1115_PGA pga)
