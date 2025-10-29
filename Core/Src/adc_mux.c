@@ -29,6 +29,10 @@ static const float buck_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float battery_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float current_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 
+static const float battery_calibration_gain = 1.0f;
+static const float buck_calibration_gain = 1.0f;
+static const float current_calibration_gain = 1.8387f; // calibrate shunt reading (2.6A measured / 2.182A reported)
+
 static const float pga_full_scale_table[] = {
     6.144f,
     4.096f, //dla celli
@@ -131,7 +135,7 @@ static float readBatteryVoltage(I2C_HandleTypeDef *hi2c, float *divider_voltage)
     if (divider_voltage != NULL) {
         *divider_voltage = sense_voltage;
     }
-    return sense_voltage * battery_divider_scale;
+    return sense_voltage * battery_divider_scale * battery_calibration_gain;
 }
 
 static float readBuck(I2C_HandleTypeDef *hi2c)
@@ -139,7 +143,7 @@ static float readBuck(I2C_HandleTypeDef *hi2c)
     const ADS1115_PGA buck_pga = ADS1115_PGA_4V096;
     int16_t raw = ads1115_read_voltage(hi2c, 1, buck_pga);
     float sense_voltage = ads1115_raw_to_voltage(raw, buck_pga);
-    return sense_voltage * buck_divider_scale;
+    return sense_voltage * buck_divider_scale * buck_calibration_gain;
 }
 
 static float readCurrent(I2C_HandleTypeDef *hi2c, float battery_divider_voltage)
@@ -150,7 +154,7 @@ static float readCurrent(I2C_HandleTypeDef *hi2c, float battery_divider_voltage)
     float shunt_voltage = (current_high_voltage - battery_divider_voltage) * current_divider_scale;
     float shunt_resistance = 0.025f; // Effective shunt resistance (4x 0.1 ohm in parallel)
     float current_voltage = shunt_voltage;
-    return current_voltage / shunt_resistance;
+    return (current_voltage / shunt_resistance) * current_calibration_gain;
 }
 
 VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
@@ -192,7 +196,7 @@ void print_all_voltages_uart(const VoltageValues *values)
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
     int int_curr = (int)values->current;
-    int dec_curr = (int)((values->current - int_curr) * 1000);
+    int dec_curr = (int)(fabsf(values->current - int_curr) * 1000.0f + 0.5f);
     snprintf(msg, sizeof(msg), "    Current: %d.%03d A\r\n", int_curr, dec_curr);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }
