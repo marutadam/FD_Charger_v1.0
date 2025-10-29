@@ -8,12 +8,24 @@
 #define BATTERY_CHARGE_H
 
 #include "stm32f4xx_hal.h"
+#include "adc_mux.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <stdint.h>
 #include <stdbool.h>
+
+// PI Controller structure
+typedef struct {
+    float kp;
+    float ki;
+    float integral_limit;
+    float integral;
+    float output_min;
+    float output_max;
+} PI_Controller;
 
 typedef enum {
     CHARGER_STATE_IDLE = 0,
@@ -50,18 +62,11 @@ typedef struct {
     uint16_t update_period_ms;   // nominal control update period
 } ChargerControllerCfg;
 
-
-typedef struct {
-    float pack_voltage;      // measured pack voltage (V)
-    float charge_current;    // measured charge current (A)
-    float max_cell_voltage;  // highest cell voltage (V)
-} ChargerMeasurements;
-
 void charger_controller_init(ChargerControllerCfg cfg);
 void charger_set_targets(float target_voltage, float target_current);
 void charger_enable(void);
 void charger_disable(void);
-void charger_update(const ChargerMeasurements *meas);
+void charger_update(const VoltageValues *meas);
 void charger_fault_clear_all(void);
 bool charger_fault_any(void);
 
@@ -69,6 +74,10 @@ ChargerState charger_get_state(void);
 float charger_get_pwm_duty(void);
 uint16_t charger_get_update_period_ms(void);
 void CalculateFanRPM(void);
+
+// Function prototypes
+void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max);
+float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt);
 
 // Fan RPM measurement variables defined in main.c
 extern volatile uint32_t fan_int_count;

@@ -23,16 +23,51 @@ typedef struct {
     float target_voltage;
     float target_current;
     float duty;
-    float current_integrator;
-    float voltage_integrator;
+    float duty_min_counts;
+    float duty_max_counts;
+    float pwm_counts_max;
+    PI_Controller current_pi;
+    PI_Controller voltage_pi;
     uint32_t last_tick;
     uint32_t termination_timer;
 } ChargerController;
 
 static ChargerController charger = {0};
 
-static void charger_apply_pwm(float duty_percent);
-static void charger_reset_integrators(void);
+static void charger_apply_pwm(float duty_counts);
+
+void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max) {
+    controller->kp = kp;
+    controller->ki = ki;
+    controller->integral_limit = integral_limit;
+    controller->integral = 0.0f;
+    controller->output_min = output_min;
+    controller->output_max = output_max;
+}
+
+float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt) {
+    float error = setpoint - measurement;
+    
+    // Integral term with anti-windup
+    controller->integral += error * dt;
+    if (controller->integral > controller->integral_limit) {
+        controller->integral = controller->integral_limit;
+    } else if (controller->integral < -controller->integral_limit) {
+        controller->integral = -controller->integral_limit;
+    }
+    
+    // PI controller output
+    float output = (controller->kp * error) + (controller->ki * controller->integral);
+    
+    // Clamp output
+    if (output > controller->output_max) {
+        output = controller->output_max;
+    } else if (output < controller->output_min) {
+        output = controller->output_min;
+    }
+    
+    return output;
+}
 
 void charger_fault_clear_all(void) {
     charger_faults.overvoltage = false;
@@ -72,12 +107,36 @@ void charger_controller_init(ChargerControllerCfg cfg) {
     if (charger.cfg.update_period_ms == 0) {
         charger.cfg.update_period_ms = 10;
     }
+
+    float pwm_counts_max = (float)__HAL_TIM_GET_AUTORELOAD(&htim2);
+    if (pwm_counts_max <= 0.0f) {
+        pwm_counts_max = 1.0f;
+    }
+    charger.pwm_counts_max = pwm_counts_max;
+    charger.duty_min_counts = (charger.cfg.duty_min / 100.0f) * pwm_counts_max;
+    charger.duty_max_counts = (charger.cfg.duty_max / 100.0f) * pwm_counts_max;
+    if (charger.duty_min_counts > charger.duty_max_counts) {
+        charger.duty_min_counts = charger.duty_max_counts;
+    }
+
+    pi_controller_init(&charger.current_pi,
+                       cfg.current_kp,
+                       cfg.current_ki,
+                       cfg.integral_limit,
+                       charger.duty_min_counts,
+                       charger.duty_max_counts);
+    pi_controller_init(&charger.voltage_pi,
+                       cfg.voltage_kp,
+                       cfg.voltage_ki,
+                       cfg.integral_limit,
+                       charger.duty_min_counts,
+                       charger.duty_max_counts);
+
     charger.enabled = 0;
     charger.state = CHARGER_STATE_IDLE;
     charger.target_voltage = 0.0f;
     charger.target_current = 0.0f;
     charger.duty = 0.0f;
-    charger_reset_integrators();
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
     charger_apply_pwm(0.0f);
@@ -87,7 +146,8 @@ void charger_controller_init(ChargerControllerCfg cfg) {
 void charger_set_targets(float target_voltage, float target_current) {
     charger.target_voltage = target_voltage;
     charger.target_current = target_current;
-    charger_reset_integrators();
+    charger.current_pi.integral = 0.0f;
+    charger.voltage_pi.integral = 0.0f;
 }
 
 void charger_enable(void) {
@@ -96,8 +156,9 @@ void charger_enable(void) {
     }
     charger.enabled = 1;
     charger.state = CHARGER_STATE_CC;
-    charger.duty = charger.cfg.duty_min;
-    charger_reset_integrators();
+    charger.duty = charger.duty_min_counts;
+    charger.current_pi.integral = 0.0f;
+    charger.voltage_pi.integral = 0.0f;
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
     charger_apply_pwm(charger.duty);
@@ -107,11 +168,14 @@ void charger_disable(void) {
     charger.enabled = 0;
     charger.state = CHARGER_STATE_IDLE;
     charger.duty = 0.0f;
-    charger_reset_integrators();
+    charger.current_pi.integral = 0.0f;
+    charger.voltage_pi.integral = 0.0f;
     charger_apply_pwm(0.0f);
 }
 
-void charger_update(const ChargerMeasurements *meas) {
+
+
+void charger_update(const VoltageValues *meas) {
     if (!charger.enabled || charger.state == CHARGER_STATE_IDLE) {
         return;
     }
@@ -141,9 +205,26 @@ void charger_update(const ChargerMeasurements *meas) {
     }
 
     bool overvoltage_fault = false;
+    float max_cell_voltage = 0.0f;
+    for (size_t i = 0; i < (sizeof(meas->cell) / sizeof(meas->cell[0])); ++i) {
+        if (meas->cell[i] > max_cell_voltage) {
+            max_cell_voltage = meas->cell[i];
+        }
+    }
+
     if (charger.cfg.cell_overvoltage_limit > 0.0f &&
-        meas->max_cell_voltage >= charger.cfg.cell_overvoltage_limit) {
+        max_cell_voltage >= charger.cfg.cell_overvoltage_limit) {
         overvoltage_fault = true;
+    }
+
+    float current_derate = 1.0f;
+    if (max_cell_voltage > 4.10f) {
+        current_derate = (4.20f - max_cell_voltage) / (4.20f - 4.10f);
+        if (current_derate < 0.0f) {
+            current_derate = 0.0f;
+        } else if (current_derate > 1.0f) {
+            current_derate = 1.0f;
+        }
     }
     charger_faults.overvoltage = overvoltage_fault;
 
@@ -157,15 +238,15 @@ void charger_update(const ChargerMeasurements *meas) {
 
     if (charger.state == CHARGER_STATE_CC &&
         charger.target_voltage > 0.0f &&
-        meas->pack_voltage >= (charger.target_voltage - charger.cfg.voltage_hysteresis)) {
+        meas->battery_voltage >= (charger.target_voltage - charger.cfg.voltage_hysteresis)) {
         charger.state = CHARGER_STATE_CV;
-        charger.voltage_integrator = 0.0f;
+        charger.voltage_pi.integral = 0.0f;
     }
 
     if (charger.state == CHARGER_STATE_CV &&
         charger.cfg.termination_current > 0.0f &&
         charger.cfg.termination_hold_ms > 0U) {
-        if (meas->charge_current <= charger.cfg.termination_current) {
+        if (meas->current <= charger.cfg.termination_current) {
             if (charger.termination_timer < charger.cfg.termination_hold_ms) {
                 charger.termination_timer += elapsed_ms;
             }
@@ -183,31 +264,13 @@ void charger_update(const ChargerMeasurements *meas) {
         charger.termination_timer = 0;
     }
 
+    float effective_current_target = charger.target_current * current_derate;
+
     float duty_cmd = charger.duty;
     if (charger.state == CHARGER_STATE_CC) {
-        float err = charger.target_current - meas->charge_current;
-        charger.current_integrator += err * dt;
-        if (charger.cfg.integral_limit > 0.0f) {
-            if (charger.current_integrator > charger.cfg.integral_limit) {
-                charger.current_integrator = charger.cfg.integral_limit;
-            } else if (charger.current_integrator < -charger.cfg.integral_limit) {
-                charger.current_integrator = -charger.cfg.integral_limit;
-            }
-        }
-        duty_cmd = (charger.cfg.current_kp * err) +
-                   (charger.cfg.current_ki * charger.current_integrator);
+        duty_cmd = pi_controller_update(&charger.current_pi, effective_current_target, meas->current, dt);
     } else if (charger.state == CHARGER_STATE_CV) {
-        float err = charger.target_voltage - meas->pack_voltage;
-        charger.voltage_integrator += err * dt;
-        if (charger.cfg.integral_limit > 0.0f) {
-            if (charger.voltage_integrator > charger.cfg.integral_limit) {
-                charger.voltage_integrator = charger.cfg.integral_limit;
-            } else if (charger.voltage_integrator < -charger.cfg.integral_limit) {
-                charger.voltage_integrator = -charger.cfg.integral_limit;
-            }
-        }
-        duty_cmd = (charger.cfg.voltage_kp * err) +
-                   (charger.cfg.voltage_ki * charger.voltage_integrator);
+        duty_cmd = pi_controller_update(&charger.voltage_pi, charger.target_voltage, meas->battery_voltage, dt);
     } else if (charger.state == CHARGER_STATE_COMPLETE || charger.state == CHARGER_STATE_FAULT) {
         charger.enabled = 0;
         charger.duty = 0.0f;
@@ -216,21 +279,6 @@ void charger_update(const ChargerMeasurements *meas) {
     }
 
     charger.duty = duty_cmd;
-    if (charger.duty > charger.cfg.duty_max) {
-        charger.duty = charger.cfg.duty_max;
-    }
-    if (charger.duty < 0.0f) {
-        charger.duty = 0.0f;
-        if (charger.state == CHARGER_STATE_CC) {
-            charger.current_integrator = 0.0f;
-        } else if (charger.state == CHARGER_STATE_CV) {
-            charger.voltage_integrator = 0.0f;
-        }
-    } else if (charger.state == CHARGER_STATE_CC &&
-               charger.duty > 0.0f &&
-               charger.duty < charger.cfg.duty_min) {
-        charger.duty = charger.cfg.duty_min;
-    }
 
     charger_apply_pwm(charger.duty);
 }
@@ -240,28 +288,34 @@ ChargerState charger_get_state(void) {
 }
 
 float charger_get_pwm_duty(void) {
-    return charger.duty;
+    if (charger.pwm_counts_max <= 0.0f) {
+        return 0.0f;
+    }
+    return (charger.duty / charger.pwm_counts_max) * 100.0f;
 }
 
 uint16_t charger_get_update_period_ms(void) {
     return charger.cfg.update_period_ms;
 }
 
-static void charger_apply_pwm(float duty_percent) {
-    if (duty_percent < 0.0f) {
-        duty_percent = 0.0f;
+static void charger_apply_pwm(float duty_counts) {
+    if (duty_counts < 0.0f) {
+        duty_counts = 0.0f;
     }
-    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim2);
-    uint32_t pulse = (uint32_t)((duty_percent * (arr + 1U)) / 100.0f);
-    if (pulse > arr) {
-        pulse = arr;
+    if (charger.pwm_counts_max <= 0.0f) {
+        charger.pwm_counts_max = (float)__HAL_TIM_GET_AUTORELOAD(&htim2);
+        if (charger.pwm_counts_max <= 0.0f) {
+            charger.pwm_counts_max = 1.0f;
+        }
     }
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pulse);
-}
+    float max_counts = charger.pwm_counts_max;
+    if (duty_counts > max_counts) {
+        duty_counts = max_counts;
+    }
+    __disable_irq();
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (uint32_t)duty_counts);
+    __enable_irq();
 
-static void charger_reset_integrators(void) {
-    charger.current_integrator = 0.0f;
-    charger.voltage_integrator = 0.0f;
 }
 
 
