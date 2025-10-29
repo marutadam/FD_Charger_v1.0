@@ -102,7 +102,7 @@ volatile uint8_t system_state = 0x03; // 0x00 = System ok, 0x0X = error codes
 volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
-volatile uint8_t is_battery_present = 1;
+volatile uint8_t is_battery_present = 0;
 volatile bool is_battery_charging = false;
 
 
@@ -977,68 +977,92 @@ void CanTaskHandler(void *argument)
 void ChargerTaskHandler(void *argument)
 {
   int16_t pwm_value = 300;
+  int8_t no_batt_info_sent = 0;
+  int8_t charger_fault_info_sent = 0;
   /* USER CODE BEGIN ChargerTaskHandler */
   /* Infinite loop */
   for(;;)
   {
-
-  if (!is_battery_present){
+  if(is_battery_charging){
+  if (!is_battery_present && !no_batt_info_sent) {
     pwm_value=0;
-  }
-  else {
-  if (is_battery_charging){
-   // UpdateCharging();
-  }
-  else {
-   // StartCharging();
-    pwm_value=0;
-  }
+    no_batt_info_sent = 1;
+    if (DEBUG_CHARGER_TASK) {
+      HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] No battery detected, stopping charging.\r\n", 49, HAL_MAX_DELAY);
+    }
+  } else if (is_battery_present) {
+    no_batt_info_sent = 0;
+  // if (is_battery_charging){
+  //  // UpdateCharging();
+  // }
+  // else {
+  //  // StartCharging();
+  //   pwm_value=0;
+  // }
     char msg[64];
-    if(current_battery_voltages.current<2.0){
-    sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-    __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
-    __enable_irq();
+    if(charger_fault_any() ){
+      pwm_value=0;
+      if(!charger_fault_info_sent){
+        charger_fault_info_sent=1;
+    
+      sprintf(msg, "[ERROR] Charger fault detected, stopping charging.\r\n");
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      }
+    }
+    else if(!charger_fault_any() && charger_fault_info_sent){
+      charger_fault_info_sent=0;
+    }
+    else{
+    if(current_battery_voltages.battery_voltage >12.0f && current_battery_voltages.current<2.0){
+      if(pwm_value<200)
+      {
+        pwm_value=200;
+      }
+      else
+      if(pwm_value<300)
+      {
+        pwm_value+=10;
+      }
+      else if( pwm_value<400)
+      {
+        pwm_value+=5;
+      }
+      else
+      {
         pwm_value+=1;
+      }
     }
     else if(current_battery_voltages.current>7.0){
       pwm_value-=50;
       if(pwm_value<0)
         pwm_value=0;
-      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
-      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-      __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
-
-      __enable_irq();
     }
     else if(current_battery_voltages.current>5.0){
       pwm_value-=20;
       if(pwm_value<0)
         pwm_value=0;
-      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
-      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-      __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
-
-      __enable_irq();
     }
-    else if (current_battery_voltages.current>2.2){
+    else if (current_battery_voltages.current>2.4){
       pwm_value-=1;
       if(pwm_value<0)
         pwm_value=0;
+    }
+  }
+  if(DEBUG_CHARGER_TASK){
+      char msg[64];
       sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
       HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+  }
       __disable_irq();
       __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
       __enable_irq();
-    }
-    
-
-    CalculateFanRPM();
-    osDelay(1000); // 2000 ms
+      
 }
+  }
+    CalculateFanRPM();
+
+    osDelay(500); // 500 ms
+
   /* USER CODE END ChargerTaskHandler */
 }
 }
@@ -1054,12 +1078,13 @@ void AdcTaskHandler(void *argument)
   /* USER CODE BEGIN AdcTaskHandler */
   char msg[64];
   uint8_t found = 0;
+  uint8_t fan_error_sent = 0;
   // Scan I2C addresses 0x03 to 0x77
   HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] AdcTaskHandler started\r\n", 30, HAL_MAX_DELAY);
   for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
     if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
-      int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
-      HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+      // int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
+      // HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
       if (addr == 0x48) {
         found = 1;
       }
@@ -1067,7 +1092,7 @@ void AdcTaskHandler(void *argument)
     osDelay(2);
   }
   if (found) {
-    sprintf(msg, "[ADC] ADS1115 detected at 0x48!\r\n");
+    sprintf(msg, "[INIT][ADC] ADS1115 detected at 0x48!\r\n");
   } else {
     sprintf(msg, "[ERROR] ADS1115 NOT detected!\r\n");
   }
@@ -1087,11 +1112,12 @@ void AdcTaskHandler(void *argument)
       __enable_irq();
     }
 
-    if (charger_faults.fan_error) {
+    if (charger_faults.fan_error && fan_error_sent==0) {
       HAL_UART_Transmit(&huart1,
-                        (const uint8_t *)"[ERROR] Fan error detected!",
-                        27,
+                        (const uint8_t *)"[ERROR] Fan error detected!\n",
+                        29,
                         HAL_MAX_DELAY);
+      fan_error_sent = 1;
       __disable_irq();
       __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
       __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
@@ -1101,6 +1127,14 @@ void AdcTaskHandler(void *argument)
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
       __enable_irq();
+    }
+  else if (!charger_faults.fan_error){
+    if(fan_error_sent) 
+          HAL_UART_Transmit(&huart1,
+                        (const uint8_t *)"[FAN] Fan error cleared!\n",
+                        26,
+                        HAL_MAX_DELAY);
+      fan_error_sent = 0;
     }
 
     if (DEBUG_ADC_TASK) {
