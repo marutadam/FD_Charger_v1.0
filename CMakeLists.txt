@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Set the toolchain file
+set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/gcc-arm-none-eabi.cmake)
+
 #
 # This file is generated only once,
 # and is not re-generated if converter is called multiple times.
