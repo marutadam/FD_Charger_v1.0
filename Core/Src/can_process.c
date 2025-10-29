@@ -98,6 +98,7 @@ CAN_Frame StartCharging() {
     response.data[7] = 0x01;
     charger_set_targets(end_voltage, set_current);
     charger_enable();
+    is_battery_charging = true;
     return response;
     // Additional logic to start charging can be added here
 }
@@ -105,6 +106,7 @@ CAN_Frame StopCharging() {
     CAN_Frame response = CreateResponse(CMD_STOP);
     response.data[7] = 0x01;
     charger_disable();
+    is_battery_charging = false;
     return response;
     // Additional logic to stop charging can be added here
 }  
