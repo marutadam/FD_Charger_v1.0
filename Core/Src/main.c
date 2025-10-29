@@ -205,10 +205,10 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   ChargerControllerCfg charger_cfg = {
-    .current_kp = 8.0f,
-    .current_ki = 2.5f,
-    .voltage_kp = 6.0f,
-    .voltage_ki = 1.5f,
+    .current_kp = 0.1f,
+    .current_ki = 0.05f,
+    .voltage_kp = 0.1f,
+    .voltage_ki = 0.05f,
     .integral_limit = 5.0f,
     .duty_min = 3.0f,
     .duty_max = 95.0f,
@@ -976,95 +976,18 @@ void CanTaskHandler(void *argument)
 /* USER CODE END Header_ChargerTaskHandler */
 void ChargerTaskHandler(void *argument)
 {
-  int16_t pwm_value = 300;
-  int8_t no_batt_info_sent = 0;
-  int8_t charger_fault_info_sent = 0;
   /* USER CODE BEGIN ChargerTaskHandler */
   /* Infinite loop */
   for(;;)
   {
-  if(is_battery_charging){
-  if (!is_battery_present && !no_batt_info_sent) {
-    pwm_value=0;
-    no_batt_info_sent = 1;
-    if (DEBUG_CHARGER_TASK) {
-      HAL_UART_Transmit(&huart1, (uint8_t*)"[CHARGER] No battery detected, stopping charging.\r\n", 49, HAL_MAX_DELAY);
+    if(is_battery_charging){
+        charger_update(&current_battery_voltages);
     }
-  } else if (is_battery_present) {
-    no_batt_info_sent = 0;
-  // if (is_battery_charging){
-  //  // UpdateCharging();
-  // }
-  // else {
-  //  // StartCharging();
-  //   pwm_value=0;
-  // }
-    char msg[64];
-    if(charger_fault_any() ){
-      pwm_value=0;
-      if(!charger_fault_info_sent){
-        charger_fault_info_sent=1;
-    
-      sprintf(msg, "[ERROR] Charger fault detected, stopping charging.\r\n");
-      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-      }
-    }
-    else if(!charger_fault_any() && charger_fault_info_sent){
-      charger_fault_info_sent=0;
-    }
-    else{
-    if(current_battery_voltages.battery_voltage >12.0f && current_battery_voltages.current<2.0){
-      if(pwm_value<200)
-      {
-        pwm_value=200;
-      }
-      else
-      if(pwm_value<300)
-      {
-        pwm_value+=10;
-      }
-      else if( pwm_value<400)
-      {
-        pwm_value+=5;
-      }
-      else
-      {
-        pwm_value+=1;
-      }
-    }
-    else if(current_battery_voltages.current>7.0){
-      pwm_value-=50;
-      if(pwm_value<0)
-        pwm_value=0;
-    }
-    else if(current_battery_voltages.current>5.0){
-      pwm_value-=20;
-      if(pwm_value<0)
-        pwm_value=0;
-    }
-    else if (current_battery_voltages.current>2.4){
-      pwm_value-=1;
-      if(pwm_value<0)
-        pwm_value=0;
-    }
-  }
-  if(DEBUG_CHARGER_TASK){
-      char msg[64];
-      sprintf(msg, "[CHARGER] Current PWM Value: %d,\r\n", pwm_value);
-      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-  }
-      __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_value);
-      __enable_irq();
-      
-}
-  }
     CalculateFanRPM();
 
-    osDelay(500); // 500 ms
-
+    osDelay(charger_get_update_period_ms());
+  }
   /* USER CODE END ChargerTaskHandler */
-}
 }
 /* USER CODE BEGIN Header_AdcTaskHandler */
 /**
