@@ -24,6 +24,7 @@
 
 // #include "can_process.h"
 #include <stdint.h>
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -109,7 +110,7 @@ void Error_Handler(void);
 #define DEBUG_UART_TASK     1
 #define DEBUG_CAN_TASK      1
 #define DEBUG_CHARGER_TASK  1
-#define DEBUG_ADC_TASK      1
+#define DEBUG_ADC_TASK      0
 
 #ifdef __cplusplus
 }
@@ -124,6 +125,6 @@ extern volatile float end_voltage;
 extern volatile float set_current;
 extern volatile float battery_voltage;
 extern volatile float cell_voltages[6];
+extern volatile bool is_battery_charging;
 void uart_send_frame(const char *prefix, CAN_Frame *frame);
 void ProcessCanFrame(CAN_Frame *rxFrame);
-
