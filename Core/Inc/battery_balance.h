@@ -19,20 +19,27 @@ extern TIM_HandleTypeDef htim4;
 
 
 /**
- * Balance a single cell if its voltage exceeds a threshold.
+ * Balance a single cell if it sits above the pack's lowest voltage plus a deadband.
+ * The deadband parameter defines how far above the lowest cell we allow the others.
  */
-void balance_cell(uint8_t cell_index, float *cell_voltages, float threshold);
+void balance_cell(uint8_t cell_index, float *cell_voltages, float deadband);
 
 /**
- * Balance all cells by checking each cell's voltage against threshold.
+ * Balance every cell by first finding the lowest voltage cell and then
+ * bleeding any higher cells down toward (lowest + deadband).
  */
- void balance_all_cells(float *cell_voltages, uint8_t num_cells, float threshold);
+ void balance_all_cells(float *cell_voltages, uint8_t num_cells, float deadband);
 
-void balance_controller_init(uint8_t cell_index, BalanceControllerCfg cfg);
-void balance_controller_update(uint8_t cell_index, float cell_voltage, float target_voltage);
+void balance_controller_configure(float kp,
+                                  float enable_thresh,
+                                  float disable_thresh,
+                                  uint16_t min_on_ms,
+                                  uint8_t duty_max);
 
 void enable_cell_balance(uint8_t cell_index, uint8_t duty_percent);
 void disable_cell_balance(uint8_t cell_index);
+void balance_disable_all_cells(void);
+uint8_t balance_get_last_duty(uint8_t cell_index);
 
 #ifdef __cplusplus
 }
