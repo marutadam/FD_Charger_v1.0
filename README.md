@@ -1,6 +1,6 @@
-# STM32 Blackpill – Battery Management System
+# STM32 Blackpill – Battery Charging System
 
-Embedded C project for the STM32F411 “Blackpill” board that implements a complete battery management system (BMS). The firmware relies on FreeRTOS together with HAL drivers generated in STM32CubeMX, while an external MCP2515 controller handles CAN communication with the rest of the system.
+Embedded C project for the STM32F411 “Blackpill” board that implements a complete battery charginga and balancing management system. The firmware relies on FreeRTOS together with HAL drivers generated in STM32CubeMX, while an external MCP2515 controller handles CAN communication with the rest of the system.
 
 ## Key Features
 - CAN bus communication through MCP2515 with UART frame printing for debugging,
@@ -42,9 +42,3 @@ After the build completes, the `build/` directory contains the `.elf`, `.bin`, a
 - Modules inside `Core/Src/` expose helpers for CAN frame processing, charger/balancer control, and data acquisition.
 - Runtime parameters (e.g. `end_voltage`, `set_current`, `system_state`) are stored in global variables, and fault diagnostics is available over UART/CAN.
 
-## Next Steps
-- Extend UART commands to modify parameters at runtime.
-- Add unit tests for logic-heavy modules (e.g. balancing algorithm).
-- Consider automatic documentation generation from comments using Doxygen.
-
-Further configuration notes and project assumptions are also documented in `GEMINI.md`.
