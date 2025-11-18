@@ -40,9 +40,11 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
         switch (cmd) {
             case CMD_START:
                 response = StartCharging();
+                is_battery_charging = true;
                 break;
             case CMD_STOP:
                 response = StopCharging();
+                is_battery_charging = false;
                 break;
             case CMD_RESET:
                 ResetSystem();

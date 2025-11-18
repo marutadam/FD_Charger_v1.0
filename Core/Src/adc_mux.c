@@ -31,7 +31,7 @@ static const float current_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 
 static const float battery_calibration_gain = 1.0f;
 static const float buck_calibration_gain = 1.0f;
-static const float current_calibration_gain = 1.8387f; // calibrate shunt reading (2.6A measured / 2.182A reported)
+static const float current_calibration_gain = 1.50f; // calibration: 5.0 A actual / 3.33 A measured
 
 static const float pga_full_scale_table[] = {
     6.144f,
@@ -127,10 +127,13 @@ static void readCells(I2C_HandleTypeDef *hi2c, float *cells, int16_t *rawCells)
     }
 }
 
-static float readBatteryVoltage(I2C_HandleTypeDef *hi2c, float *divider_voltage)
+static float readBatteryVoltage(I2C_HandleTypeDef *hi2c, float *divider_voltage, int16_t *raw_out)
 {
     const ADS1115_PGA battery_pga = ADS1115_PGA_4V096;
     int16_t raw = ads1115_read_voltage(hi2c, 2, battery_pga);
+    if (raw_out != NULL) {
+        *raw_out = raw;
+    }
     float sense_voltage = ads1115_raw_to_voltage(raw, battery_pga);
     if (divider_voltage != NULL) {
         *divider_voltage = sense_voltage;
@@ -146,12 +149,28 @@ static float readBuck(I2C_HandleTypeDef *hi2c)
     return sense_voltage * buck_divider_scale * buck_calibration_gain;
 }
 
-static float readCurrent(I2C_HandleTypeDef *hi2c, float battery_divider_voltage)
+static float readCurrent(I2C_HandleTypeDef *hi2c,
+                         float battery_voltage,
+                         float buck_voltage,
+                         int16_t battery_raw,
+                         int16_t *raw_current_out)
 {
     const ADS1115_PGA current_pga = ADS1115_PGA_4V096;
     int16_t raw_current = ads1115_read_voltage(hi2c, 0, current_pga);
+    if (buck_voltage < battery_voltage) {
+        if (raw_current_out != NULL) {
+            *raw_current_out = 0;
+        }
+        return 0.0f;
+    }
     float current_high_voltage = ads1115_raw_to_voltage(raw_current, current_pga);
-    float shunt_voltage = (current_high_voltage - battery_divider_voltage) * current_divider_scale;
+    float battery_voltage_sense = ads1115_raw_to_voltage(battery_raw, ADS1115_PGA_4V096);
+    float current_high_actual = current_high_voltage * current_divider_scale;
+    float battery_actual = battery_voltage_sense * battery_divider_scale;
+    float shunt_voltage = current_high_actual - battery_actual;
+    if (raw_current_out != NULL) {
+        *raw_current_out = raw_current - battery_raw;
+    }
     float shunt_resistance = 0.025f; // Effective shunt resistance (4x 0.1 ohm in parallel)
     float current_voltage = shunt_voltage;
     return (current_voltage / shunt_resistance) * current_calibration_gain;
@@ -163,9 +182,14 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
     int16_t rawCells[6] = {0};
     readCells(hi2c, values.cell, rawCells);
     float battery_divider_voltage = 0.0f;
-    values.battery_voltage = readBatteryVoltage(hi2c, &battery_divider_voltage);
+    int16_t battery_raw = 0;
+    values.battery_voltage = readBatteryVoltage(hi2c, &battery_divider_voltage, &battery_raw);
     values.buck_voltage = readBuck(hi2c);
-    values.current = readCurrent(hi2c, battery_divider_voltage);
+    values.current = readCurrent(hi2c,
+                                 values.battery_voltage,
+                                 values.buck_voltage,
+                                 battery_raw,
+                                 &values.current_raw);
     for (int i = 0; i < 6; ++i) {
         values.cell_raw[i] = rawCells[i];
     }
@@ -178,25 +202,25 @@ void print_all_voltages_uart(const VoltageValues *values)
     snprintf(msg, sizeof(msg), "[ADC] Current values:\r\n");
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
-    for (int i = 0; i < 6; i++) {
-        int int_part = (int)values->cell[i];
-        int dec_part = (int)(fabsf((values->cell[i] - int_part) * 1000.0f) + 0.5f);
-        snprintf(msg, sizeof(msg), "    CELL%d: %d.%03d V (raw=%d)\r\n", i+1, int_part, dec_part, values->cell_raw[i]);
-        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-    }
+    // for (int i = 0; i < 6; i++) {
+    //     int int_part = (int)values->cell[i];
+    //     int dec_part = (int)(fabsf((values->cell[i] - int_part) * 1000.0f) + 0.5f);
+    //     snprintf(msg, sizeof(msg), "[ADC]    CELL%d: %d.%03d V (raw=%d)\r\n", i+1, int_part, dec_part, values->cell_raw[i]);
+    //     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    // }
 
     int int_bat = (int)values->battery_voltage;
     int dec_bat = (int)(fabsf((values->battery_voltage - int_bat) * 1000.0f) + 0.5f);
-    snprintf(msg, sizeof(msg), "    Battery: %d.%03d V\r\n", int_bat, dec_bat);
+    snprintf(msg, sizeof(msg), "[ADC]    Battery: %d.%03d V\r\n", int_bat, dec_bat);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
     int int_buck = (int)values->buck_voltage;
     int dec_buck = (int)(fabsf((values->buck_voltage - int_buck) * 1000.0f) + 0.5f);
-    snprintf(msg, sizeof(msg), "    BUCK: %d.%03d V\r\n", int_buck, dec_buck);
+    snprintf(msg, sizeof(msg), "[ADC]    BUCK: %d.%03d V\r\n", int_buck, dec_buck);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
     int int_curr = (int)values->current;
     int dec_curr = (int)(fabsf(values->current - int_curr) * 1000.0f + 0.5f);
-    snprintf(msg, sizeof(msg), "    Current: %d.%03d A\r\n", int_curr, dec_curr);
+    snprintf(msg, sizeof(msg), "[ADC]    Current: %d.%03d A (raw=%d)\r\n", int_curr, dec_curr, values->current_raw);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }

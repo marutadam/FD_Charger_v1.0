@@ -89,6 +89,13 @@ const osThreadAttr_t adcTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for balanceTask */
+osThreadId_t balanceTaskHandle;
+const osThreadAttr_t balanceTask_attributes = {
+  .name = "balanceTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for uartRxQueue */
 osMessageQueueId_t uartRxQueueHandle;
 const osMessageQueueAttr_t uartRxQueue_attributes = {
@@ -96,8 +103,8 @@ const osMessageQueueAttr_t uartRxQueue_attributes = {
 };
 /* USER CODE BEGIN PV */
 // Global variables to store settings
-volatile float end_voltage = 0.0f;
-volatile float set_current = 0.0f;
+volatile float end_voltage = 24.6f;
+volatile float set_current = 2.0f;
 volatile uint8_t system_state = 0x03; // 0x00 = System ok, 0x0X = error codes
 volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
@@ -114,7 +121,6 @@ volatile uint32_t fan_rpm = 0;
 volatile uint8_t rxByte;
 VoltageValues current_battery_voltages;
 #define CMD_MAX_LEN 64
-
 
  void uart_send_frame(const char *prefix, CAN_Frame *frame)
 {
@@ -155,6 +161,7 @@ void UartTask(void *argument);
 void CanTaskHandler(void *argument);
 void ChargerTaskHandler(void *argument);
 void AdcTaskHandler(void *argument);
+void BalanceTaskHandler(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -205,18 +212,20 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   ChargerControllerCfg charger_cfg = {
-    .current_kp = 0.1f,
-    .current_ki = 0.05f,
-    .voltage_kp = 0.1f,
+    // PI gains tuned down to prevent oscillation and overshoot.
+    // Kp provides primary response, Ki corrects for steady-state error.
+    .current_kp = 15.0f,      // Reduced from 50.0f to be less aggressive
+    .current_ki = 2.0f,       // Reduced from 10.0f
+    .voltage_kp = 0.2f,
     .voltage_ki = 0.05f,
-    .integral_limit = 5.0f,
+    .integral_limit = 600.0f,
     .duty_min = 3.0f,
     .duty_max = 95.0f,
-    .voltage_hysteresis = 0.1f,
+    .voltage_hysteresis = 0.2f,
     .termination_current = 0.5f,
     .termination_hold_ms = 5000,
     .cell_overvoltage_limit = 4.25f,
-    .update_period_ms = 10
+    .update_period_ms = 100
   };
   charger_controller_init(charger_cfg);
   charger_set_targets(end_voltage, set_current);
@@ -294,26 +303,18 @@ if (DEBUG_INFO) {
   /* Create the thread(s) */
   /* creation of uartTask */
   uartTaskHandle = osThreadNew(UartTask, NULL, &uartTask_attributes);
-  if (uartTaskHandle == NULL) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] UART thread error!\r\n", 29, HAL_MAX_DELAY);
-  }
 
   /* creation of canTask */
   canTaskHandle = osThreadNew(CanTaskHandler, NULL, &canTask_attributes);
-if (canTaskHandle == NULL) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] CAN thread error!\r\n", 28, HAL_MAX_DELAY);
-}
+
   /* creation of chargerTask */
   chargerTaskHandle = osThreadNew(ChargerTaskHandler, NULL, &chargerTask_attributes);
-  if (chargerTaskHandle == NULL) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] Charger thread error!\r\n", 32, HAL_MAX_DELAY);
-  }
 
   /* creation of adcTask */
   adcTaskHandle = osThreadNew(AdcTaskHandler, NULL, &adcTask_attributes);
-  if (adcTaskHandle == NULL) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)"[ERROR] ADC thread error!\r\n", 28, HAL_MAX_DELAY);
-}
+
+  /* creation of balanceTask */
+  balanceTaskHandle = osThreadNew(BalanceTaskHandler, NULL, &balanceTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -329,6 +330,7 @@ if (canTaskHandle == NULL) {
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -579,9 +581,9 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 9;
+  htim3.Init.Prescaler = 9999;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 9999;
+  htim3.Init.Period = 999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -602,17 +604,14 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
@@ -643,9 +642,9 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 9;
+  htim4.Init.Prescaler = 9999;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 9999;
+  htim4.Init.Period = 999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
@@ -666,7 +665,6 @@ static void MX_TIM4_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 0;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
@@ -707,10 +705,12 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.Mode = UART_MODE_TX_RX;
   huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  HAL_UART_Init(&huart1);
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
 
-  HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE END USART1_Init 2 */
 
 }
@@ -737,7 +737,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, BUILTIN_LED_Pin|LED_WS2812C_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, SPI_CS_Pin|LED_DATA_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, A_Pin|B_Pin|C_Pin, GPIO_PIN_RESET);
@@ -746,7 +746,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = BUILTIN_LED_Pin|LED_WS2812C_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CAN_PROG_BTN_Pin */
@@ -757,7 +757,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : FAN_TACH_Pin */
   GPIO_InitStruct.Pin = FAN_TACH_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(FAN_TACH_GPIO_Port, &GPIO_InitStruct);
 
@@ -780,6 +780,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED_DATA_Pin */
+  GPIO_InitStruct.Pin = LED_DATA_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LED_DATA_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   
@@ -838,16 +845,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-   // Toggle onboard LED (PC13) on each received byte
+    if (huart->Instance == USART1) {
 
+        // Wysyłamy bajt do kolejki (z ISR)
+        osMessageQueuePut(uartRxQueueHandle, (const void *)&rxByte, 0, 0);
 
- if (huart->Instance == USART1) {
-  // Wysyłamy bajt do kolejki (z ISR)
-  osMessageQueuePut(uartRxQueueHandle, (const void *)&rxByte, 0, 0);
-
-  // Uruchamiamy ponownie odbiór następnego bajtu
-  HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
-  }
+        // Uruchamiamy ponownie odbiór następnego bajtu
+        HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
+    }
 }
 void EXTI2_IRQHandler(void)
 {
@@ -980,15 +985,36 @@ void ChargerTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    if(is_battery_charging){
-        charger_update(&current_battery_voltages);
+    if(is_battery_charging && is_battery_present)
+    {
+      // The PI controller is now active.
+      // It will handle CC/CV phases and PWM duty cycle adjustments.
+      charger_update(&current_battery_voltages);
     }
+    else
+    {
+      // If charging is globally disabled or battery is unplugged,
+      // ensure the hardware is turned off.
+      const char *reason = NULL;
+      if (!is_battery_present) {
+        reason = "battery not present";
+      } else if (!is_battery_charging) {
+        reason = "charging disabled flag";
+      } else {
+        reason = "charger idle guard";
+      }
+      charger_disable_with_reason(reason);
+    }
+
+    // This function checks fan speed and can set a fault flag.
     CalculateFanRPM();
 
+    // The task will now sleep for the duration configured in the charger settings.
     osDelay(charger_get_update_period_ms());
   }
   /* USER CODE END ChargerTaskHandler */
 }
+
 /* USER CODE BEGIN Header_AdcTaskHandler */
 /**
 * @brief Function implementing the adscTask thread.
@@ -1025,6 +1051,15 @@ void AdcTaskHandler(void *argument)
     current_battery_voltages = ads1115_read_all_voltages(&hi2c1);
     is_battery_present = (current_battery_voltages.battery_voltage > 12.0f) ? 1U : 0U;
 
+    if (!is_battery_present) {
+      // Set the fault flag. The ChargerTaskHandler will see is_battery_present is false
+      // and call charger_disable(). This prevents this task from modifying the
+      // is_battery_charging command flag, which should only be controlled by the user/CAN.
+      charger_faults.battery_not_present = true;
+    } else { // battery present
+      charger_faults.battery_not_present = false;
+    }
+
     if (current_battery_voltages.buck_voltage > 26.0f) {
       HAL_UART_Transmit(&huart1,
                         (const uint8_t *)"[ERROR] Buck voltage to high!",
@@ -1033,6 +1068,7 @@ void AdcTaskHandler(void *argument)
       __disable_irq();
       __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
       __enable_irq();
+      charger_disable_with_reason("buck overvoltage");
     }
 
     if (charger_faults.fan_error && fan_error_sent==0) {
@@ -1050,6 +1086,7 @@ void AdcTaskHandler(void *argument)
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
       __enable_irq();
+      charger_disable_with_reason("fan error detected");
     }
   else if (!charger_faults.fan_error){
     if(fan_error_sent) 
@@ -1066,6 +1103,72 @@ void AdcTaskHandler(void *argument)
     osDelay(50);
   }
   /* USER CODE END AdcTaskHandler */
+}
+
+/* USER CODE BEGIN Header_BalanceTaskHandler */
+/**
+* @brief Function implementing the balanceTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_BalanceTaskHandler */
+void BalanceTaskHandler(void *argument)
+{
+  /* USER CODE BEGIN BalanceTaskHandler */
+  const uint32_t balance_period_ms = 200U;
+  const float balance_deadband_v = 0.010f;   // 10 mV window around the lowest cell
+  const float min_cell_for_balance = 3.0f;   // skip balancing if pack is deeply discharged
+
+  balance_controller_configure(400.0f,   // ~20% duty for a 50 mV delta
+                               0.03f,    // enable threshold in volts
+                               0.01f,    // disable threshold
+                               250U,     // minimum on-time in ms
+                               60U);     // max PWM duty percent
+
+  /* Infinite loop */
+  for(;;)
+  {
+    VoltageValues snapshot = current_battery_voltages;
+
+    // Track the minimum and maximum cell to understand pack imbalance.
+    float lowest = snapshot.cell[0];
+    float highest = snapshot.cell[0];
+    for (uint8_t i = 1; i < 6; ++i) {
+      if (snapshot.cell[i] < lowest) {
+        lowest = snapshot.cell[i];
+      }
+      if (snapshot.cell[i] > highest) {
+        highest = snapshot.cell[i];
+      }
+    }
+
+    bool can_balance = true;
+
+    // Skip balancing when the pack is disconnected or deeply discharged.
+    if (!is_battery_present || lowest < min_cell_for_balance) {
+      can_balance = false;
+    }
+
+    // Require a minimum spread before enabling balancing to avoid chattering.
+    if (can_balance) {
+      float spread = highest - lowest;
+      if (spread < (0.03f + balance_deadband_v)) {
+        can_balance = false;
+      }
+    }
+
+    // Turn everything off and wait if balancing is not allowed in this cycle.
+    if (!can_balance) {
+      balance_disable_all_cells();
+      osDelay(balance_period_ms);
+      continue;
+    }
+
+    // Actively balance all cells toward the lowest cell + deadband window.
+    balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+    osDelay(balance_period_ms);
+  }
+  /* USER CODE END BalanceTaskHandler */
 }
 
 /**
@@ -1123,4 +1226,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
