@@ -6,6 +6,9 @@
 #include <stdint.h>
 #include "battery_balance.h"
 #include "param_types.h"
+#include "main.h"
+#include <stdbool.h>
+
 
 typedef enum {
     CMD_CHECK = 0x01,
@@ -26,7 +29,7 @@ typedef enum {
 } CAN_COMMAND;
 
 /* CAN Frame Structure */
-typedef struct {
+typedef struct CAN_Frame {
     uint8_t id;            // CAN ID (11-bit or 29-bit)
     uint8_t extended;       // 0 = Standard ID, 1 = Extended ID
     uint8_t rtr;            // Remote Transmission Request
@@ -59,12 +62,13 @@ extern volatile float charging_current;
 extern volatile uint16_t charged_mah;
 extern volatile uint16_t charging_power;
 extern volatile uint8_t is_battery_present;
-extern volatile BalanceControllerCfg balance_cfg;
 extern volatile uint8_t CAN_ID;
 extern volatile float cell_voltages[6];
 extern volatile float end_voltage;
 extern volatile float battery_voltage;
 extern VoltageValues current_battery_voltages;
+extern volatile bool is_battery_charging;
+
 #ifdef __cplusplus
 }
 #endif

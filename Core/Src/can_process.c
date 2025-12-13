@@ -107,7 +107,7 @@ CAN_Frame StartCharging() {
 CAN_Frame StopCharging() {
     CAN_Frame response = CreateResponse(CMD_STOP);
     response.data[7] = 0x01;
-    charger_disable();
+    charger_disable_with_reason("CAN stop command");
     is_battery_charging = false;
     return response;
     // Additional logic to stop charging can be added here
@@ -247,6 +247,9 @@ CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
     cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
     cfg.Kp = (float)(rxFrame->data[4] * 4); 
     cfg.duty_max = rxFrame->data[5]; // percent
+    if (cfg.duty_max == 0) {
+        cfg.duty_max = 60;
+    }
     cfg.min_on_ms = (uint16_t)(rxFrame->data[6] * 100); // ms
     cfg.storage_volt = (float)rxFrame->data[7] / 10.0f; // 0.1V to V
     cfg.can_id = ParamStore_Read_CAN_ID();
