@@ -66,6 +66,7 @@ void charger_controller_init(ChargerControllerCfg cfg);
 void charger_set_targets(float target_voltage, float target_current);
 void charger_enable(void);
 void charger_disable(void);
+void charger_disable_with_reason(const char *reason);
 void charger_update(const VoltageValues *meas);
 void charger_fault_clear_all(void);
 bool charger_fault_any(void);
