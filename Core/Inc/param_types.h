@@ -12,19 +12,6 @@ typedef struct {
 } FlashParams;
 
 
-/** Configuration for the P regulator with hysteresis and min on-time */
-typedef struct {
-    float Kp;              // proportional gain (duty % per volt)
-    float Ki;              // integral gain (duty % per volt-second)
-    float Kd;              // derivative gain (duty % per volt per second)
-    float enable_thresh;   // volts above target to start balancing
-    float disable_thresh;  // volts above target to stop balancing (hysteresis)
-    uint16_t min_on_ms;    // minimum on time in milliseconds
-    uint8_t duty_max;      // maximum duty percent (0-100)
-    float integral_limit;  // clamp for integral term (volt-seconds)
-    float storage_volt;  // voltage to maintain when charging is done
-} BalanceControllerCfg;
-
 
 typedef struct {
     float cell[6];         // CELL1–CELL6 voltages
@@ -32,6 +19,7 @@ typedef struct {
     float battery_voltage; // Battery voltage
     float buck_voltage;    // BUCK converter voltage
     float current;         // Battery current
+    int16_t current_raw;   // raw ADC code for current channel
 } VoltageValues;
 
 typedef struct {
