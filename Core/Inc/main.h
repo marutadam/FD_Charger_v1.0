@@ -22,9 +22,6 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
-// #include "can_process.h"
-#include <stdint.h>
-#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +33,10 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 // Ensure CAN_Frame is defined for uart_send_frame
 #include "mcp2515.h"
+#ifndef CAN_FRAME_FWD_DECLARED
+#define CAN_FRAME_FWD_DECLARED
+typedef struct CAN_Frame CAN_Frame;
+#endif
 #include "battery_balance.h"
 #include "battery_charge.h"
 #include "flash_param_store.h"
@@ -47,7 +48,13 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+extern ADC_HandleTypeDef hadc1;
+extern I2C_HandleTypeDef hi2c1;
+extern SPI_HandleTypeDef hspi1;
+extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim3;
+extern TIM_HandleTypeDef htim4;
+extern UART_HandleTypeDef huart1;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -66,6 +73,7 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+void uart_send_frame(const char *prefix, CAN_Frame *frame);
 
 /* USER CODE END EFP */
 
@@ -94,6 +102,8 @@ void Error_Handler(void);
 #define B_GPIO_Port GPIOB
 #define C_Pin GPIO_PIN_14
 #define C_GPIO_Port GPIOB
+#define LED_DATA_Pin GPIO_PIN_8
+#define LED_DATA_GPIO_Port GPIOA
 #define CELL3_PWM_Pin GPIO_PIN_4
 #define CELL3_PWM_GPIO_Port GPIOB
 #define CELL4_PWM_Pin GPIO_PIN_5
@@ -102,29 +112,31 @@ void Error_Handler(void);
 #define CELL5_PWM_GPIO_Port GPIOB
 #define CELL6_PWM_Pin GPIO_PIN_7
 #define CELL6_PWM_GPIO_Port GPIOB
-#define FLASH_ADDR_CAN_ID  0x0807FFF0
 
-
-//Debugging macros
+/* USER CODE BEGIN Private defines */
+#ifndef DEBUG_INFO
 #define DEBUG_INFO 1
-#define DEBUG_UART_TASK     1
-#define DEBUG_CAN_TASK      1
-#define DEBUG_CHARGER_TASK  1
-#define DEBUG_ADC_TASK      1
+#endif
+
+#ifndef DEBUG_UART_TASK
+#define DEBUG_UART_TASK 0
+#endif
+
+#ifndef DEBUG_ADC_TASK
+#define DEBUG_ADC_TASK 1
+#endif
+
+#ifndef DEBUG_BALANCE
+#define DEBUG_BALANCE 1
+#endif
+
+#ifndef DEBUG_CHARGER_TASK
+#define DEBUG_CHARGER_TASK 1
+#endif
+/* USER CODE END Private defines */
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* __MAIN_H */
-
-// Externs for CAN processing module
-extern UART_HandleTypeDef huart1;
-extern volatile uint8_t CAN_ID;
-extern volatile float end_voltage;
-extern volatile float set_current;
-extern volatile float battery_voltage;
-extern volatile float cell_voltages[6];
-extern volatile bool is_battery_charging;
-void uart_send_frame(const char *prefix, CAN_Frame *frame);
-void ProcessCanFrame(CAN_Frame *rxFrame);

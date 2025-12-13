@@ -915,7 +915,7 @@ for (;;) {
             last_was_eol = 0;
         }
     }
-    osDelay(10);
+    osDelay(11);
 }
 
   /* USER CODE END 5 */
@@ -1032,8 +1032,8 @@ void AdcTaskHandler(void *argument)
   HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] AdcTaskHandler started\r\n", 30, HAL_MAX_DELAY);
   for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
     if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
-      // int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
-      // HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+      int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
       if (addr == 0x48) {
         found = 1;
       }
@@ -1145,27 +1145,44 @@ void BalanceTaskHandler(void *argument)
     bool can_balance = true;
 
     // Skip balancing when the pack is disconnected or deeply discharged.
-    if (!is_battery_present || lowest < min_cell_for_balance) {
-      can_balance = false;
-    }
+    // if (!is_battery_present || lowest < min_cell_for_balance) {
+    //   can_balance = false;
+    // }
 
     // Require a minimum spread before enabling balancing to avoid chattering.
-    if (can_balance) {
-      float spread = highest - lowest;
-      if (spread < (0.03f + balance_deadband_v)) {
-        can_balance = false;
-      }
-    }
+    // if (can_balance) {
+    //   float spread = highest - lowest;
+    //   if (spread < (0.03f + balance_deadband_v)) {
+    //     can_balance = false;
+    //   }
+    // }
 
     // Turn everything off and wait if balancing is not allowed in this cycle.
-    if (!can_balance) {
-      balance_disable_all_cells();
-      osDelay(balance_period_ms);
-      continue;
-    }
+    // if (!can_balance) {
+    //   balance_disable_all_cells();
+    //   osDelay(balance_period_ms);
+    //   continue;
+    // }
 
     // Actively balance all cells toward the lowest cell + deadband window.
-    balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+    // balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+
+    // Optional debug dump showing cell voltages and PWM duties.
+    // if (DEBUG_BALANCE) {
+    //   char buf[128];
+    //   int len = snprintf(buf,
+    //                      sizeof(buf),
+    //                      "[BAL] V=%.3f %.3f %.3f %.3f %.3f %.3f | duty=",
+    //                      snapshot.cell[0], snapshot.cell[1], snapshot.cell[2],
+    //                      snapshot.cell[3], snapshot.cell[4], snapshot.cell[5]);
+    //   HAL_UART_Transmit(&huart1, (uint8_t*)buf, len, HAL_MAX_DELAY);
+    //   for (uint8_t i = 0; i < 6; ++i) {
+    //     uint8_t duty = balance_get_last_duty(i);
+    //     len = snprintf(buf, sizeof(buf), "%u%% ", duty);
+    //     HAL_UART_Transmit(&huart1, (uint8_t*)buf, len, HAL_MAX_DELAY);
+    //   }
+    //   HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+    // }
     osDelay(balance_period_ms);
   }
   /* USER CODE END BalanceTaskHandler */
