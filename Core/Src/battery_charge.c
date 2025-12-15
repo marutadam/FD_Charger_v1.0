@@ -15,6 +15,7 @@
 
 
 #define FAN_PULSES_PER_REV 2 
+#define FAN_DEBUG 1
 
 extern TIM_HandleTypeDef htim2;
 extern UART_HandleTypeDef huart1;
@@ -276,7 +277,12 @@ void charger_update(const VoltageValues *meas) {
                 if (charger.duty >= 320.0f && step > DUTY_STEP) {
                     step = DUTY_STEP; // beyond threshold only fine adjustments
                 }
+                if(meas->current < charger.target_current-0.2f) {
                 charger.duty += step;
+                }
+                if(meas->current > charger.target_current+0.4f) {
+                    charger.duty -= DUTY_STEP;
+                }
             }
             break;
 
@@ -423,13 +429,17 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
 }
 
 
-void CalculateFanRPM(void)
+void CalculateFanRPM(int measurement_time_ms)
 {
     static uint32_t last_fan_int_count = 0;
     uint32_t pulses = fan_int_count - last_fan_int_count;
     last_fan_int_count = fan_int_count;
 
     // If called every 1 second:
-    fan_rpm = (pulses / FAN_PULSES_PER_REV) * 60; // measurement_time = 1s
+    fan_rpm = (pulses / FAN_PULSES_PER_REV) * 60000 / measurement_time_ms; // measurement_time in ms
     charger_faults.fan_error = (fan_rpm < 1000U);
+
+#ifdef FAN_DEBUG
+    charger_log("[FAN] RPM: %lu (pulses: %lu)\r\n", (unsigned long)fan_rpm, (unsigned long)pulses);
+#endif
 }

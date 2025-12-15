@@ -74,7 +74,8 @@ bool charger_fault_any(void);
 ChargerState charger_get_state(void);
 float charger_get_pwm_duty(void);
 uint16_t charger_get_update_period_ms(void);
-void CalculateFanRPM(void);
+void CalculateFanRPM(int measurement_time_ms);
+
 
 // Function prototypes
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max);
