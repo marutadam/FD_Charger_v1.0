@@ -885,14 +885,20 @@ for (;;) {
             if (!last_was_eol) {
                 cmd[idx] = '\0';
 
-                // Parse SETID command
-                if ((strncmp(cmd, "SETID=0x", 8) == 0 || strncmp(cmd, "SETID=0X", 8) == 0) && strlen(cmd) == 10) {
-                    uint8_t new_id = (uint8_t)strtol(cmd + 8, NULL, 16);
+                // Parse SETID command (accept SETID=0xNN or SETID=NN)
+                if (strncmp(cmd, "SETID=", 6) == 0) {
+                  long parsed = strtol(cmd + 6, NULL, 0); // base 0 accepts 0x/0X or decimal
+                  if (parsed < 0 || parsed > 0xFF) {
+                    const char *err = "[RESPONSE] Invalid CAN_ID (must be 0x00-0xFF)\r\n";
+                    HAL_UART_Transmit(&huart1, (uint8_t*)err, strlen(err), HAL_MAX_DELAY);
+                  } else {
+                    uint8_t new_id = (uint8_t)parsed;
                     ParamStore_Save_CAN_ID(new_id);
                     CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
-                    char msg[32];
+                    char msg[48];
                     sprintf(msg, "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+                  }
                 }
                 // Parse GETID command
                 else if (strcmp(cmd, "GETID") == 0) {
@@ -953,6 +959,8 @@ void CanTaskHandler(void *argument)
 
     // Modular CAN frame processing
     ProcessCanFrame(&rxFrame);
+    int len = sprintf(uart_buffer, "[CAN] Frame received\r\n");
+        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
         }
     }
     
@@ -1007,7 +1015,7 @@ void ChargerTaskHandler(void *argument)
     }
 
     // This function checks fan speed and can set a fault flag.
-    CalculateFanRPM();
+    CalculateFanRPM(charger_get_update_period_ms());
 
     // The task will now sleep for the duration configured in the charger settings.
     osDelay(charger_get_update_period_ms());
