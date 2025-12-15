@@ -1,9 +1,10 @@
 #include "ws2812c.h"
+#include "stm32f411xe.h"
 #include "stm32f4xx_hal_gpio.h"
 
 // Ustaw odpowiednio do Twojego projektu!
-#define WS2812_GPIO_PORT GPIOC
-#define WS2812_GPIO_PIN  GPIO_PIN_15
+#define WS2812_GPIO_PORT GPIOA
+#define WS2812_GPIO_PIN  GPIO_PIN_8
 
 static void ws2812_delay_cycles(uint32_t cycles) {
     uint32_t start = DWT->CYCCNT;
