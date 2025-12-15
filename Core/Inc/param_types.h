@@ -17,6 +17,7 @@ typedef struct {
     float cell[6];         // CELL1–CELL6 voltages
     int16_t cell_raw[6];   // raw ADC codes for each cell
     float battery_voltage; // Battery voltage
+    float shunt_voltage;   // Shunt voltage
     float buck_voltage;    // BUCK converter voltage
     float current;         // Battery current
     int16_t current_raw;   // raw ADC code for current channel
