@@ -104,8 +104,9 @@ const osMessageQueueAttr_t uartRxQueue_attributes = {
 /* USER CODE BEGIN PV */
 // Global variables to store settings
 volatile float end_voltage = 24.6f;
+volatile float end_voltage_storage = 22.2f; // default ~3.7V per cell for 6S
 volatile float set_current = 2.0f;
-volatile uint8_t system_state = 0x03; // 0x00 = System ok, 0x0X = error codes
+volatile uint8_t system_state = 0x00; // 0x00 = System ok, 0x0X = error codes
 volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
@@ -236,6 +237,10 @@ int main(void)
   // Read CAN ID from flash on startup
   //CAN_ID = Flash_Read_CAN_ID();
   CAN_ID = ParamStore_Read_CAN_ID();
+  FlashParams startup_params = ReadAllParams();
+  if (startup_params.storage_volt > 0.0f) {
+    end_voltage_storage = startup_params.storage_volt;
+  }
   if(DEBUG_INFO){
   char canid_msg[64];
   sprintf(canid_msg, "[INIT] Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
@@ -1137,6 +1142,7 @@ void BalanceTaskHandler(void *argument)
   for(;;)
   {
     VoltageValues snapshot = current_battery_voltages;
+    bool can_balance = true;
 
     // Track the minimum and maximum cell to understand pack imbalance.
     float lowest = snapshot.cell[0];
@@ -1150,30 +1156,28 @@ void BalanceTaskHandler(void *argument)
       }
     }
 
-    bool can_balance = true;
-
     // Skip balancing when the pack is disconnected or deeply discharged.
-    // if (!is_battery_present || lowest < min_cell_for_balance) {
-    //   can_balance = false;
-    // }
+    if (!is_battery_present || lowest < min_cell_for_balance) {
+      can_balance = false;
+    }
 
     // Require a minimum spread before enabling balancing to avoid chattering.
-    // if (can_balance) {
-    //   float spread = highest - lowest;
-    //   if (spread < (0.03f + balance_deadband_v)) {
-    //     can_balance = false;
-    //   }
-    // }
+    if (can_balance) {
+      float spread = highest - lowest;
+      if (spread < (0.03f + balance_deadband_v)) {
+        can_balance = false;
+      }
+    }
 
     // Turn everything off and wait if balancing is not allowed in this cycle.
-    // if (!can_balance) {
-    //   balance_disable_all_cells();
-    //   osDelay(balance_period_ms);
-    //   continue;
-    // }
+    if (!can_balance) {
+      balance_disable_all_cells();
+      osDelay(balance_period_ms);
+      continue;
+    }
 
     // Actively balance all cells toward the lowest cell + deadband window.
-    // balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+    balance_all_cells(snapshot.cell, 6, balance_deadband_v);
 
     // Optional debug dump showing cell voltages and PWM duties.
     // if (DEBUG_BALANCE) {
