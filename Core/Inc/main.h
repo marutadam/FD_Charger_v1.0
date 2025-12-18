@@ -31,6 +31,15 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+// Standard C libraries needed for main.c
+// Note: If IntelliSense reports these as missing, it's a false positive.
+// The ARM toolchain has these headers and they compile correctly.
+#include <stdio.h>   // For snprintf(), sprintf()
+#include <string.h>  // For strlen(), strcmp(), strncmp()
+#include <stdlib.h>  // For strtol()
+#include <stdint.h>  // For uint8_t, uint32_t, etc.
+#include <stdbool.h> // For bool type
+
 // Ensure CAN_Frame is defined for uart_send_frame
 #include "mcp2515.h"
 #ifndef CAN_FRAME_FWD_DECLARED

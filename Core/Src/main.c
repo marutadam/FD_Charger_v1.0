@@ -65,15 +65,15 @@ UART_HandleTypeDef huart1;
 osThreadId_t uartTaskHandle;
 const osThreadAttr_t uartTask_attributes = {
   .name = "uartTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4,  // Reduced from 512*4 - UART parsing is lightweight
+  .priority = (osPriority_t) osPriorityBelowNormal,  // Non-critical, can be preempted
 };
 /* Definitions for canTask */
 osThreadId_t canTaskHandle;
 const osThreadAttr_t canTask_attributes = {
   .name = "canTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityHigh,  // CAN is time-critical
 };
 /* Definitions for chargerTask */
 osThreadId_t chargerTaskHandle;
@@ -101,6 +101,11 @@ osMessageQueueId_t uartRxQueueHandle;
 const osMessageQueueAttr_t uartRxQueue_attributes = {
   .name = "uartRxQueue"
 };
+/* Definitions for voltage data mutex */
+osMutexId_t voltageDataMutexHandle;
+const osMutexAttr_t voltageDataMutex_attributes = {
+  .name = "voltageDataMutex"
+};
 /* USER CODE BEGIN PV */
 // Global variables to store settings
 volatile float end_voltage = 24.6f;
@@ -127,22 +132,54 @@ VoltageValues current_battery_voltages;
 {
   char buffer[128];
   int len = 0;
-  len += sprintf(buffer, "%sCAN ID: 0x%03lX | DLC: %d | Data: ",
+  len += snprintf(buffer, sizeof(buffer), "%sCAN ID: 0x%03lX | DLC: %d | Data: ",
            prefix ? prefix : "", (unsigned long)frame->id, frame->dlc);
   for (uint8_t i = 0; i < frame->dlc && i < 8; i++) {
-    len += sprintf(buffer + len, "%02X ", frame->data[i]);
+    len += snprintf(buffer + len, sizeof(buffer) - len, "%02X ", frame->data[i]);
   }
   if (frame->extended) {
-    len += sprintf(buffer + len, "| EXT");
+    len += snprintf(buffer + len, sizeof(buffer) - len, "| EXT");
   }
   if (frame->rtr) {
-    len += sprintf(buffer + len, " RTR");
+    len += snprintf(buffer + len, sizeof(buffer) - len, " RTR");
   }
-  len += sprintf(buffer + len, "\r\n");
+  len += snprintf(buffer + len, sizeof(buffer) - len, "\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
 }
 static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
 uint8_t Flash_Read_CAN_ID(void);
+
+// Helper function to safely disable all PWM outputs
+static inline void disable_all_pwm(void)
+{
+  __disable_irq();
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
+  __enable_irq();
+}
+
+// Helper function to safely read voltage data
+static inline VoltageValues get_battery_voltages_safe(void)
+{
+  VoltageValues snapshot;
+  osMutexAcquire(voltageDataMutexHandle, osWaitForever);
+  snapshot = current_battery_voltages;
+  osMutexRelease(voltageDataMutexHandle);
+  return snapshot;
+}
+
+// Helper function to safely write voltage data
+static inline void set_battery_voltages_safe(const VoltageValues *voltages)
+{
+  osMutexAcquire(voltageDataMutexHandle, osWaitForever);
+  current_battery_voltages = *voltages;
+  osMutexRelease(voltageDataMutexHandle);
+}
 
 volatile uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
 
@@ -243,7 +280,7 @@ int main(void)
   }
   if(DEBUG_INFO){
   char canid_msg[64];
-  sprintf(canid_msg, "[INIT] Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
+  snprintf(canid_msg, sizeof(canid_msg), "[INIT] Startup CAN_ID from flash: 0x%02X\r\n", CAN_ID);
   HAL_UART_Transmit(&huart1, (uint8_t*)canid_msg, strlen(canid_msg), HAL_MAX_DELAY);
   // Initialize MCP2515 with 125kbps CAN speed
   const char* init_msg = "[INIT] Initializing MCP2515 at 125kbps...\r\n";
@@ -263,13 +300,13 @@ int main(void)
     HAL_UART_Transmit(&huart1, (uint8_t*)success_msg, strlen(success_msg), HAL_MAX_DELAY);
   } else {
     char error_msg[100];  
-      sprintf(error_msg, "[ERROR] MCP2515 initialization failed! Error: %d\r\n", result);
+      snprintf(error_msg, sizeof(error_msg), "[ERROR] MCP2515 initialization failed! Error: %d\r\n", result);
       HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
     // Try to read a register to test SPI communication
     HAL_Delay(10);
     uint8_t test_read = MCP2515_ReadRegister(&hspi1, MCP2515_CANSTAT);
     if(DEBUG_INFO) {
-      sprintf(error_msg, "[INIT] CANSTAT register read: 0x%02X\r\n", test_read);
+      snprintf(error_msg, sizeof(error_msg), "[INIT] CANSTAT register read: 0x%02X\r\n", test_read);
       HAL_UART_Transmit(&huart1, (uint8_t*)error_msg, strlen(error_msg), HAL_MAX_DELAY);
     }
     // Continue anyway to allow debugging
@@ -287,6 +324,10 @@ if (DEBUG_INFO) {
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  voltageDataMutexHandle = osMutexNew(&voltageDataMutex_attributes);
+  if (voltageDataMutexHandle == NULL) {
+    Error_Handler();  // Failed to create mutex
+  }
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -303,6 +344,9 @@ if (DEBUG_INFO) {
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  if (uartRxQueueHandle == NULL) {
+    Error_Handler();  // Failed to create queue
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -322,12 +366,20 @@ if (DEBUG_INFO) {
   balanceTaskHandle = osThreadNew(BalanceTaskHandler, NULL, &balanceTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
+  /* Validate all tasks were created successfully */
+  if (uartTaskHandle == NULL || canTaskHandle == NULL || 
+      chargerTaskHandle == NULL || adcTaskHandle == NULL || 
+      balanceTaskHandle == NULL) {
+    Error_Handler();  // Failed to create one or more tasks
+  }
+
+  /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
-  HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1); // uruchom przerwanie odbioru
+  // HAL_UART_Receive_IT already called in USER CODE BEGIN 2
 
   /* USER CODE END RTOS_EVENTS */
 
@@ -885,7 +937,8 @@ void UartTask(void *argument)
     HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] UART Task started\r\n", 26, HAL_MAX_DELAY);
 }
 for (;;) {
-    if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, osWaitForever) == osOK) {
+    // Use timeout of 1000ms instead of forever - prevents hanging
+    if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 1000) == osOK) {
         if ((c == '\r' || c == '\n')) {
             if (!last_was_eol) {
                 cmd[idx] = '\0';
@@ -901,7 +954,7 @@ for (;;) {
                     ParamStore_Save_CAN_ID(new_id);
                     CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
                     char msg[48];
-                    sprintf(msg, "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
+                    snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
                   }
                 }
@@ -910,7 +963,7 @@ for (;;) {
                     uint8_t current_id = ParamStore_Read_CAN_ID();
                     PrintAllParamsToUART();
                     char msg[32];
-                    sprintf(msg, "[RESPONSE] CAN_ID is 0x%02X\r\n", current_id);
+                    snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID is 0x%02X\r\n", current_id);
                     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
                 }
                 else {
@@ -926,7 +979,7 @@ for (;;) {
             last_was_eol = 0;
         }
     }
-    osDelay(11);
+    // No longer blocking here - allows other tasks to run
 }
 
   /* USER CODE END 5 */
@@ -961,25 +1014,28 @@ void CanTaskHandler(void *argument)
         // Read CAN message
         if (MCP2515_ReadMessage(&hspi1, &rxFrame) == MCP2515_OK) {
 
-
     // Modular CAN frame processing
     ProcessCanFrame(&rxFrame);
-    int len = sprintf(uart_buffer, "[CAN] Frame received\r\n");
+    int len = snprintf(uart_buffer, sizeof(uart_buffer), "[CAN] Frame received\r\n");
         HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
         }
     }
     
-    // Check for CAN errors
-    uint8_t error = MCP2515_CheckError(&hspi1);
-    if (error != 0) {
-        int len = sprintf(uart_buffer, "CAN Error: 0x%02X\r\n", error);
-        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
-        
-        // Clear error flags by writing 0 to EFLG register
-        MCP2515_WriteRegister(&hspi1, MCP2515_EFLG, 0x00);
-        
-        // Also clear interrupt flags
-        MCP2515_WriteRegister(&hspi1, MCP2515_CANINTF, 0x00);
+    // Check for CAN errors less frequently
+    static uint32_t error_check_count = 0;
+    if (++error_check_count >= 10) {  // Check errors every 10 iterations
+        error_check_count = 0;
+        uint8_t error = MCP2515_CheckError(&hspi1);
+        if (error != 0) {
+            int len = snprintf(uart_buffer, sizeof(uart_buffer), "[CAN] Error: 0x%02X\r\n", error);
+            HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
+            
+            // Clear error flags by writing 0 to EFLG register
+            MCP2515_WriteRegister(&hspi1, MCP2515_EFLG, 0x00);
+            
+            // Also clear interrupt flags
+            MCP2515_WriteRegister(&hspi1, MCP2515_CANINTF, 0x00);
+        }
     }
   }
   /* USER CODE END CanTaskHandler */
@@ -1041,11 +1097,11 @@ void AdcTaskHandler(void *argument)
   char msg[64];
   uint8_t found = 0;
   uint8_t fan_error_sent = 0;
-  // Scan I2C addresses 0x03 to 0x77
+  // Scan I2C addresses 0x03 to 0x77 only once on startup
   HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] AdcTaskHandler started\r\n", 30, HAL_MAX_DELAY);
   for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
     if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
-      int len = sprintf(msg, "[ADC] I2C device found at 0x%02X\r\n", addr);
+      int len = snprintf(msg, sizeof(msg), "[ADC] I2C device found at 0x%02X\r\n", addr);
       HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
       if (addr == 0x48) {
         found = 1;
@@ -1054,64 +1110,52 @@ void AdcTaskHandler(void *argument)
     osDelay(2);
   }
   if (found) {
-    sprintf(msg, "[INIT][ADC] ADS1115 detected at 0x48!\r\n");
+    snprintf(msg, sizeof(msg), "[INIT][ADC] ADS1115 detected at 0x48!\r\n");
   } else {
-    sprintf(msg, "[ERROR] ADS1115 NOT detected!\r\n");
+    snprintf(msg, sizeof(msg), "[ERROR] ADS1115 NOT detected!\r\n");
   }
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-  // Infinite loop (or repeat scan if you want)
+  // Infinite loop
   for (;;) {
-    current_battery_voltages = ads1115_read_all_voltages(&hi2c1);
-    is_battery_present = (current_battery_voltages.battery_voltage > 12.0f) ? 1U : 0U;
+    VoltageValues new_voltages = ads1115_read_all_voltages(&hi2c1);
+    set_battery_voltages_safe(&new_voltages);  // Thread-safe update with mutex
+    
+    is_battery_present = (new_voltages.battery_voltage > 12.0f) ? 1U : 0U;
 
     if (!is_battery_present) {
-      // Set the fault flag. The ChargerTaskHandler will see is_battery_present is false
-      // and call charger_disable(). This prevents this task from modifying the
-      // is_battery_charging command flag, which should only be controlled by the user/CAN.
       charger_faults.battery_not_present = true;
-    } else { // battery present
+    } else {
       charger_faults.battery_not_present = false;
     }
 
-    if (current_battery_voltages.buck_voltage > 26.0f) {
+    if (new_voltages.buck_voltage > 26.0f) {
       HAL_UART_Transmit(&huart1,
-                        (const uint8_t *)"[ERROR] Buck voltage to high!",
-                        30,
+                        (const uint8_t *)"[ERROR] Buck voltage too high!\r\n",
+                        32,
                         HAL_MAX_DELAY);
-      __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-      __enable_irq();
+      disable_all_pwm();
       charger_disable_with_reason("buck overvoltage");
     }
 
-    if (charger_faults.fan_error && fan_error_sent==0) {
+    if (charger_faults.fan_error && fan_error_sent == 0) {
       HAL_UART_Transmit(&huart1,
-                        (const uint8_t *)"[ERROR] Fan error detected!\n",
-                        29,
+                        (const uint8_t *)"[ERROR] Fan error detected!\r\n",
+                        30,
                         HAL_MAX_DELAY);
       fan_error_sent = 1;
-      __disable_irq();
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
-      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
-      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, 0);
-      __enable_irq();
+      disable_all_pwm();
       charger_disable_with_reason("fan error detected");
     }
-  else if (!charger_faults.fan_error){
-    if(fan_error_sent) 
-          HAL_UART_Transmit(&huart1,
-                        (const uint8_t *)"[FAN] Fan error cleared!\n",
-                        26,
+    else if (!charger_faults.fan_error && fan_error_sent) {
+      HAL_UART_Transmit(&huart1,
+                        (const uint8_t *)"[FAN] Fan error cleared!\r\n",
+                        27,
                         HAL_MAX_DELAY);
       fan_error_sent = 0;
     }
 
     if (DEBUG_ADC_TASK) {
-      print_all_voltages_uart(&current_battery_voltages);
+      print_all_voltages_uart(&new_voltages);
     }
     osDelay(50);
   }
@@ -1141,7 +1185,7 @@ void BalanceTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    VoltageValues snapshot = current_battery_voltages;
+    VoltageValues snapshot = get_battery_voltages_safe();  // Thread-safe read with mutex
     bool can_balance = true;
 
     // Track the minimum and maximum cell to understand pack imbalance.
@@ -1179,22 +1223,6 @@ void BalanceTaskHandler(void *argument)
     // Actively balance all cells toward the lowest cell + deadband window.
     balance_all_cells(snapshot.cell, 6, balance_deadband_v);
 
-    // Optional debug dump showing cell voltages and PWM duties.
-    // if (DEBUG_BALANCE) {
-    //   char buf[128];
-    //   int len = snprintf(buf,
-    //                      sizeof(buf),
-    //                      "[BAL] V=%.3f %.3f %.3f %.3f %.3f %.3f | duty=",
-    //                      snapshot.cell[0], snapshot.cell[1], snapshot.cell[2],
-    //                      snapshot.cell[3], snapshot.cell[4], snapshot.cell[5]);
-    //   HAL_UART_Transmit(&huart1, (uint8_t*)buf, len, HAL_MAX_DELAY);
-    //   for (uint8_t i = 0; i < 6; ++i) {
-    //     uint8_t duty = balance_get_last_duty(i);
-    //     len = snprintf(buf, sizeof(buf), "%u%% ", duty);
-    //     HAL_UART_Transmit(&huart1, (uint8_t*)buf, len, HAL_MAX_DELAY);
-    //   }
-    //   HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
-    // }
     osDelay(balance_period_ms);
   }
   /* USER CODE END BalanceTaskHandler */
@@ -1231,7 +1259,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   char uart_buffer[100];
-  int len = sprintf(uart_buffer, "[ERROR] PWM Error!\r\n");
+  int len = snprintf(uart_buffer, sizeof(uart_buffer), "[ERROR] Critical error occurred!\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
   __disable_irq();
   while (1)
