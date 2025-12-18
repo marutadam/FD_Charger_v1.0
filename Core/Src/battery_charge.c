@@ -6,6 +6,7 @@
 
 #include "battery_charge.h"
 #include "main.h"
+#include "battery_balance.h"
 #include "stm32f4xx_hal.h"
 #include <math.h>
 #include <stdarg.h>
@@ -45,6 +46,7 @@ static void charger_log(const char *fmt, ...);
 static const char *charger_state_to_string(ChargerState state);
 static void charger_log_state_change(ChargerState prev_state, ChargerState new_state, const char *reason);
 static void charger_disable_internal(const char *reason);
+static void charger_storage_update(const VoltageValues *meas);
 
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max) {
     controller->kp = kp;
@@ -301,12 +303,15 @@ void charger_update(const VoltageValues *meas) {
 
         case CHARGER_STATE_COMPLETE:
             charger_disable_with_reason("charge complete");
-            return; // Exit
+            return; // Exit 
 
         case CHARGER_STATE_FAULT:
             charger_disable_with_reason("charger fault");
-            return; // Exit
+            return; // Exit 
 
+        case CHARGER_STATE_STORAGE:
+            charger_storage_update(meas);
+            break;
         case CHARGER_STATE_IDLE:
         default:
             // Should not happen if charger.enabled is true, but as a safeguard:
@@ -350,6 +355,18 @@ void charger_update(const VoltageValues *meas) {
 
 ChargerState charger_get_state(void) {
     return charger.state;
+}
+
+void charger_enter_storage_mode(void) {
+    if (charger.target_voltage <= 0.0f || charger.target_current <= 0.0f) {
+        return;
+    }
+    if (!charger.enabled) {
+        charger_enable();
+    }
+    ChargerState prev = charger.state;
+    charger.state = CHARGER_STATE_STORAGE;
+    charger_log_state_change(prev, charger.state, "enter storage mode");
 }
 
 float charger_get_pwm_duty(void) {
@@ -410,6 +427,8 @@ static const char *charger_state_to_string(ChargerState state) {
             return "COMPLETE";
         case CHARGER_STATE_FAULT:
             return "FAULT";
+        case CHARGER_STATE_STORAGE:
+            return "STORAGE";
         default:
             return "UNKNOWN";
     }
@@ -425,6 +444,75 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
         charger_log("[CHARGER] State %s -> %s (%s)\r\n", from, to, reason);
     } else {
         charger_log("[CHARGER] State %s -> %s\r\n", from, to);
+    }
+}
+
+#define STORAGE_BALANCE_KP           800.0f
+#define STORAGE_BALANCE_DEADBAND_V    0.010f   // ignore deltas below 10 mV
+#define STORAGE_BALANCE_MAX_DUTY      80U
+#define STORAGE_CELL_TARGET_V         3.70f
+
+static uint8_t storage_compute_duty(float delta_v) {
+    if (delta_v <= 0.0f) {
+        return 0U;
+    }
+    float duty = delta_v * STORAGE_BALANCE_KP;
+    if (duty > (float)STORAGE_BALANCE_MAX_DUTY) {
+        duty = (float)STORAGE_BALANCE_MAX_DUTY;
+    }
+    if (duty < 0.0f) {
+        duty = 0.0f;
+    }
+    uint8_t duty_u8 = (uint8_t)duty;
+    if (duty_u8 == 0U && duty > 0.0f) {
+        duty_u8 = 1U;
+    }
+    return duty_u8;
+}
+
+static void charger_storage_update(const VoltageValues *meas) {
+    if (meas == NULL) {
+        balance_disable_all_cells();
+        return;
+    }
+
+    const uint8_t cell_count = 6U;
+    float lowest = meas->cell[0];
+    float highest = meas->cell[0];
+    for (uint8_t i = 1; i < cell_count; ++i) {
+        if (meas->cell[i] < lowest) {
+            lowest = meas->cell[i];
+        }
+        if (meas->cell[i] > highest) {
+            highest = meas->cell[i];
+        }
+    }
+
+    // When every cell meets the storage target, stop charging/balancing.
+    if (lowest >= STORAGE_CELL_TARGET_V) {
+        balance_disable_all_cells();
+        charger_disable_with_reason("storage target reached");
+        return;
+    }
+
+    // If cells are already even, make sure all bleed paths are off.
+    if ((highest - lowest) < STORAGE_BALANCE_DEADBAND_V) {
+        balance_disable_all_cells();
+        return;
+    }
+
+    for (uint8_t i = 0; i < cell_count; ++i) {
+        float delta = meas->cell[i] - lowest;
+        if (delta <= STORAGE_BALANCE_DEADBAND_V) {
+            disable_cell_balance(i);
+            continue;
+        }
+        uint8_t duty = storage_compute_duty(delta - STORAGE_BALANCE_DEADBAND_V);
+        if (duty == 0U) {
+            disable_cell_balance(i);
+        } else {
+            enable_cell_balance(i, duty);
+        }
     }
 }
 

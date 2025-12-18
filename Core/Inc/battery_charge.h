@@ -29,10 +29,12 @@ typedef struct {
 
 typedef enum {
     CHARGER_STATE_IDLE = 0,
-    CHARGER_STATE_CC,
-    CHARGER_STATE_CV,
-    CHARGER_STATE_COMPLETE,
-    CHARGER_STATE_FAULT
+    CHARGER_STATE_CC = 1,
+    CHARGER_STATE_CV = 2,
+    CHARGER_STATE_COMPLETE = 3,
+    CHARGER_STATE_FAULT = 4,
+    CHARGER_STATE_STORAGE = 5,
+
 } ChargerState;
 
 typedef struct {
@@ -71,6 +73,9 @@ void charger_update(const VoltageValues *meas);
 void charger_fault_clear_all(void);
 bool charger_fault_any(void);
 
+// Force charger into storage mode (uses current targets)
+void charger_enter_storage_mode(void);
+
 ChargerState charger_get_state(void);
 float charger_get_pwm_duty(void);
 uint16_t charger_get_update_period_ms(void);
@@ -86,6 +91,7 @@ extern volatile uint32_t fan_int_count;
 extern volatile uint32_t fan_rpm;
 extern volatile ChargerFaultStatus charger_faults;
 extern volatile float end_voltage;
+extern volatile float end_voltage_storage;
 extern volatile float set_current;
 
 #ifdef __cplusplus
