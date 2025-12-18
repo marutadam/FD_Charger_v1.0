@@ -91,15 +91,28 @@ static void readCells(I2C_HandleTypeDef *hi2c, float *cells, int16_t *rawCells)
         CELL_5_VOLTAGE,
         CELL_6_VOLTAGE
     };
+    
+    // First read all absolute voltages from GND
+    float absolute_voltages[6];
     for (uint8_t ch = 0; ch < 6; ch++) {
         ADS1115_ChannelConfig cfg = get_ads1115_config(cell_map[ch]);
         int16_t raw = ads1115_read_voltage(hi2c, cfg.i2c_addr, cfg.channel, cell_pga);
         float sense_voltage = ads1115_raw_to_voltage(raw, cell_pga);
-        cells[ch] = sense_voltage * cell_divider_scale[ch] * cell_calibration_gain[ch];
+        absolute_voltages[ch] = sense_voltage * cell_divider_scale[ch] * cell_calibration_gain[ch];
 
         if (rawCells != NULL) {
             rawCells[ch] = raw;
         }
+    }
+    
+    // Now calculate differential voltages (each cell voltage relative to previous)
+    // Cell 1: voltage from GND to Cell1+ (0V to ~3.7V)
+    // Cell 2: voltage from Cell1+ to Cell2+ (difference)
+    // Cell 3: voltage from Cell2+ to Cell3+ (difference)
+    // etc.
+    cells[0] = absolute_voltages[0];  // Cell 1 is already correct (measured from GND)
+    for (uint8_t ch = 1; ch < 6; ch++) {
+        cells[ch] = absolute_voltages[ch] - absolute_voltages[ch - 1];  // Differential voltage
     }
 }
 
@@ -197,15 +210,24 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
 void print_all_voltages_uart(const VoltageValues *values)
 {
     char msg[128];
-    snprintf(msg, sizeof(msg), "[ADC] Current values:\r\n");
+    snprintf(msg, sizeof(msg), "[ADC] Cell voltages (differential):\r\n");
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
+    // Calculate total pack voltage for verification
+    float pack_total = 0.0f;
     for (int i = 0; i < 6; i++) {
+        pack_total += values->cell[i];
         int int_part = (int)values->cell[i];
         int dec_part = (int)(fabsf((values->cell[i] - int_part) * 1000.0f) + 0.5f);
         snprintf(msg, sizeof(msg), "[ADC]    CELL%d: %d.%03d V (raw=%d)\r\n", i+1, int_part, dec_part, values->cell_raw[i]);
         HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
     }
+    
+    // Display pack total
+    int int_pack = (int)pack_total;
+    int dec_pack = (int)(fabsf((pack_total - int_pack) * 1000.0f) + 0.5f);
+    snprintf(msg, sizeof(msg), "[ADC]    Pack Total: %d.%03d V\r\n", int_pack, dec_pack);
+    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
 
     int int_bat = (int)values->battery_voltage;
