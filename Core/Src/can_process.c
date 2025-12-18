@@ -76,6 +76,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_CONFIG_BALANCE:
                 response = ConfigBalance(rxFrame);
                 break;
+            case CMD_STORAGE:
+                response = StartStorage();
+                break;
             default:
                 // Unknown command
                 return;
@@ -252,12 +255,25 @@ CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
     }
     cfg.min_on_ms = (uint16_t)(rxFrame->data[6] * 100); // ms
     cfg.storage_volt = (float)rxFrame->data[7] / 10.0f; // 0.1V to V
+    if (cfg.storage_volt <= 0.0f) {
+        cfg.storage_volt = end_voltage_storage;
+    }
     cfg.can_id = ParamStore_Read_CAN_ID();
 
     SaveAllParams(cfg);
+    end_voltage_storage = cfg.storage_volt;
     
     HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
     // Here you would apply the configuration to your balancing controllers
     response.data[1] = 0x00; // Acknowledge
+    return response;
+}
+
+CAN_Frame StartStorage() {
+    CAN_Frame response = CreateResponse(CMD_STORAGE);
+    response.data[7] = 0x01;
+    charger_set_targets(end_voltage_storage, set_current);
+    StartStorageMode();
+    is_battery_charging = true;
     return response;
 }
