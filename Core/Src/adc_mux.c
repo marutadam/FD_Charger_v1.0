@@ -135,7 +135,7 @@ static float calculateCurrent(float shunt_voltage, float battery_voltage)
     return (current < 0.0f) ? 0.0f : current;
 }
 
-static float readCurrent(I2C_HandleTypeDef *hi2c,
+static float __attribute__((unused)) readCurrent(I2C_HandleTypeDef *hi2c,
                          float battery_voltage,
                          float buck_voltage,
                          int16_t battery_raw,
