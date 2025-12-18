@@ -164,7 +164,7 @@ static inline void disable_all_pwm(void)
 }
 
 // Helper function to safely read voltage data
-static inline VoltageValues get_battery_voltages_safe(void)
+VoltageValues get_battery_voltages_safe(void)
 {
   VoltageValues snapshot;
   osMutexAcquire(voltageDataMutexHandle, osWaitForever);

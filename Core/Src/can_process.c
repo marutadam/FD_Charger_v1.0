@@ -19,22 +19,38 @@ extern const char* CAN_GetCommandName(uint8_t cmd);
 }
 #endif
 
-// Redundant externs removed as they are declared in main.h
+// Magic number constants
+#define CAN_BROADCAST_ID 0x70
+#define VOLTAGE_OFFSET_V 1.80f
+#define VOLTAGE_SCALE 100.0f
+#define UART_TIMEOUT_MS 100
+
+// Helper function to clear response data bytes
+static inline void clear_response_data(CAN_Frame *frame) {
+    for (int i = 1; i < 8; i++) {
+        frame->data[i] = 0x00;
+    }
+}
 
 
 void ProcessCanFrame(CAN_Frame *rxFrame)
 {
     char uart_buffer[100];
-    // Accept command messages on 0x70 and CAN_ID
-    if ((rxFrame->id == 0x70 || rxFrame->id == CAN_ID) && !rxFrame->extended) {
+    
+    // Validate DLC
+    if (rxFrame->dlc == 0 || rxFrame->dlc > 8) {
+        return;
+    }
+    
+    // Accept command messages on broadcast or device-specific ID
+    if ((rxFrame->id == CAN_BROADCAST_ID || rxFrame->id == CAN_ID) && !rxFrame->extended) {
         CAN_COMMAND cmd = (CAN_COMMAND)rxFrame->data[0];
-        int len = sprintf(uart_buffer, "[0x%02X] | Data: ", rxFrame->data[0]);
-        for (uint8_t i = 1; i < rxFrame->dlc && i < 8; i++) {
-            len += sprintf(uart_buffer + len, "%02X ", rxFrame->data[i]);
+        int len = snprintf(uart_buffer, sizeof(uart_buffer), "[0x%02X] | Data: ", rxFrame->data[0]);
+        for (uint8_t i = 1; i < rxFrame->dlc && i < 8 && len < (int)sizeof(uart_buffer) - 10; i++) {
+            len += snprintf(uart_buffer + len, sizeof(uart_buffer) - len, "%02X ", rxFrame->data[i]);
         }
-        len += sprintf(uart_buffer + len, "\r\n");
-        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
-        osDelay(5);
+        len += snprintf(uart_buffer + len, sizeof(uart_buffer) - len, "\r\n");
+        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, UART_TIMEOUT_MS);
         // Example: handle commands using enum
         CAN_Frame response;
         switch (cmd) {
@@ -79,19 +95,18 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_STORAGE:
                 response = StartStorage();
                 break;
+            case CMD_DISCHARGE:
+                response = StartDischarge();
+                break;
             default:
                 // Unknown command
                 return;
-                break;
         }
         if (MCP2515_SendMessage(&hspi1, &response) == MCP2515_OK) {
-                        // osDelay(5);
                         uart_send_frame("[INFO] Response sent: ", &response);
-
                     } else {
-                        // osDelay(5);
                         const char* err_msg = "[WARN] Failed to send response\r\n";
-                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+                        HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), UART_TIMEOUT_MS);
                     }
     } 
 }
@@ -121,20 +136,18 @@ void ResetSystem() {
 
 CAN_Frame SetEndVoltage(uint8_t voltage) {
     end_voltage = (float)voltage / 10.0f;
-    
 
     CAN_Frame response = CreateResponse(CMD_SET_END_VOLTAGE);
-    float voltage_f = (float)end_voltage * 10.0f;
+    float voltage_f = end_voltage * 10.0f;
     uint16_t voltage_uint = (uint16_t)voltage_f;
-           // Log the voltage (avoid float printf, use integer math)
-                    uint16_t voltage_int = voltage_uint / 10;      // Integer part (5)
-                    uint16_t voltage_dec = voltage_uint % 10;      // Decimal part (0)
-            char buffer[60];
-                    int curr_len = sprintf(buffer, "[INFO] Set Voltage: %u.%u V (raw=0x%02X)\r\n", 
-                                          voltage_int, voltage_dec, voltage);
-                    
+    // Log the voltage (avoid float printf, use integer math)
+    uint16_t voltage_int = voltage_uint / 10;      // Integer part
+    uint16_t voltage_dec = voltage_uint % 10;      // Decimal part
+    char buffer[60];
+    int curr_len = snprintf(buffer, sizeof(buffer), "[INFO] Set Voltage: %u.%u V (raw=0x%02X)\r\n", 
+                            voltage_int, voltage_dec, voltage);
 
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, UART_TIMEOUT_MS);
 
     response.data[7] = (uint8_t)voltage_f;
     charger_set_targets(end_voltage, set_current);
@@ -142,20 +155,19 @@ CAN_Frame SetEndVoltage(uint8_t voltage) {
 }
 
 CAN_Frame SetCurrent(uint8_t current) {
-    set_current = (float)current / 10.0f;    
+    set_current = (float)current / 10.0f;
 
     CAN_Frame response = CreateResponse(CMD_SET_CURRENT);
-    float current_f = (float)set_current * 10.0f;
+    float current_f = set_current * 10.0f;
     uint16_t current_uint = (uint16_t)current_f;
-           // Log the voltage (avoid float printf, use integer math)
-                    uint16_t current_int = current_uint / 10;      // Integer part (5)
-                    uint16_t current_dec = current_uint % 10;      // Decimal part (0)
-            char buffer[60];
-                    int curr_len = sprintf(buffer, "[INFO] Set Current: %u.%u A (raw=0x%02X)\r\n", 
-                                          current_int, current_dec, current);
-                    
+    // Log the current (avoid float printf, use integer math)
+    uint16_t current_int = current_uint / 10;      // Integer part
+    uint16_t current_dec = current_uint % 10;      // Decimal part
+    char buffer[60];
+    int curr_len = snprintf(buffer, sizeof(buffer), "[INFO] Set Current: %u.%u A (raw=0x%02X)\r\n", 
+                            current_int, current_dec, current);
 
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, UART_TIMEOUT_MS);
 
     response.data[7] = (uint8_t)current_f; // Acknowledge
     charger_set_targets(end_voltage, set_current);
@@ -164,10 +176,7 @@ CAN_Frame SetCurrent(uint8_t current) {
 
 CAN_Frame CheckSystem(void){
     CAN_Frame response = CreateResponse(CMD_CHECK);
-
-    for (int i = 1; i < 7; i++) {
-        response.data[i] = 0x00; 
-    }
+    clear_response_data(&response);
     response.data[7] = system_state; 
     return response;
 }
@@ -175,76 +184,75 @@ CAN_Frame CheckSystem(void){
 
 CAN_Frame IsBatteryPresent() {
     CAN_Frame response = CreateResponse(CMD_IS_BATT_PRESENT);
-    for (int i = 1; i < 7; i++) {
-        response.data[i] = 0x00;
-    }
+    clear_response_data(&response);
     response.data[7] = is_battery_present;
     return response;
 }
 
 CAN_Frame ReadCurrentVoltage() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
+    VoltageValues voltages = get_battery_voltages_safe();  // Thread-safe read
+    
     for (int i = 1; i < 7; i++) {
-        float v = current_battery_voltages.cell[i-1];
+        float v = voltages.cell[i-1];
         // Encode: byte_value = (voltage - 1.80) / 0.01
-        int byte_value = (uint8_t)((v - 1.80f) * 100.0f);
+        float scaled = (v - VOLTAGE_OFFSET_V) * VOLTAGE_SCALE;
+        int byte_value = (int)scaled;
         if (byte_value < 0) byte_value = 0;
         if (byte_value > 255) byte_value = 255;
         response.data[i] = (uint8_t)byte_value;
     }
-    response.data[7] = (uint8_t)(current_battery_voltages.battery_voltage * 10.0f);
+    response.data[7] = (uint8_t)(voltages.battery_voltage * 10.0f);
     return response;
 }
 
 CAN_Frame ReadCurrentCurrent() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_CURRENT);
-    for (int i = 1; i < 7; i++) {
-        response.data[i] = 0x00;
-    }
+    clear_response_data(&response);
     response.data[7] = (uint8_t)(charging_current * 10.0f);
     return response;
 }
 
 CAN_Frame ReadCurrentmAh() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_MAH);
-    for (int i = 1; i < 7; i++) {
-        response.data[i] = 0x00;
-    }
-    uint8_t high_byte = (charged_mah >> 8) & 0xFF;  
-    uint8_t low_byte  = charged_mah & 0xFF;         
-    response.data[6] = high_byte;
-    response.data[7] = low_byte;
+    clear_response_data(&response);
+    // Encode 16-bit value: high byte at [6], low byte at [7]
+    response.data[6] = (uint8_t)((charged_mah >> 8) & 0xFF);
+    response.data[7] = (uint8_t)(charged_mah & 0xFF);
     return response;
 }
 
 CAN_Frame ReadCurrentPower() {
- CAN_Frame response = CreateResponse(CMD_READ_CURRENT_POWER);
-    for (int i = 1; i < 7; i++) {
-        response.data[i] = 0x00;
-    }
-    uint8_t high_byte = (charging_power >> 8) & 0xFF;  
-    uint8_t low_byte  = charging_power & 0xFF;         
-    response.data[6] = high_byte;
-    response.data[7] = low_byte;
-    return response;}
+    CAN_Frame response = CreateResponse(CMD_READ_CURRENT_POWER);
+    clear_response_data(&response);
+    // Encode 16-bit value: high byte at [6], low byte at [7]
+    response.data[6] = (uint8_t)((charging_power >> 8) & 0xFF);
+    response.data[7] = (uint8_t)(charging_power & 0xFF);
+    return response;
+}
 
 CAN_Frame CreateResponse(CAN_COMMAND cmd) {
     CAN_Frame response;
-    response.id = (uint8_t)CAN_ID; // Set appropriate ID
-    response.dlc = 8; // Set appropriate DLC
+    response.id = CAN_ID;
+    response.dlc = 8;
     response.extended = 0; // Standard ID
     response.rtr = 0; // Data frame
     response.data[0] = cmd; // Echo command
-    for (int i = 1; i < 8; i++) {
-        response.data[i] = 0x00; // Placeholder data
-    }
+    clear_response_data(&response);
     return response;
 }
 
 CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
     CAN_Frame response = CreateResponse(CMD_CONFIG_BALANCE);
+    
+    // Validate DLC for all required data bytes
+    if (rxFrame->dlc < 8) {
+        response.data[1] = 0xFF; // Error: insufficient data
+        return response;
+    }
+    
     char buffer[100];
-    int len = sprintf(buffer, "[INFO] Balance Config: ");
+    int len = snprintf(buffer, sizeof(buffer), "[INFO] Balance Config: ");
     FlashParams cfg;
     cfg.enable_thresh = (float)rxFrame->data[2] / 1000.0f; // mV to V
     cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
@@ -263,7 +271,7 @@ CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
     SaveAllParams(cfg);
     end_voltage_storage = cfg.storage_volt;
     
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, UART_TIMEOUT_MS);
     // Here you would apply the configuration to your balancing controllers
     response.data[1] = 0x00; // Acknowledge
     return response;
@@ -275,5 +283,18 @@ CAN_Frame StartStorage() {
     charger_set_targets(end_voltage_storage, set_current);
     StartStorageMode();
     is_battery_charging = true;
+    return response;
+}
+
+CAN_Frame StartDischarge() {
+    CAN_Frame response = CreateResponse(CMD_DISCHARGE);
+    clear_response_data(&response);
+    
+    // TODO: Implement discharge logic
+    // For now, stop charging and enable discharge resistors
+    charger_disable_with_reason("Discharge mode");
+    is_battery_charging = false;
+    
+    response.data[7] = 0x01; // Acknowledge
     return response;
 }

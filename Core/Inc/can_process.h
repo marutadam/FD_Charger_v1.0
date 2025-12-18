@@ -56,7 +56,8 @@ CAN_Frame IsBatteryPresent(void);
 CAN_Frame CreateResponse(CAN_COMMAND cmd);
 CAN_Frame CheckSystem(void);
 CAN_Frame ConfigBalance(CAN_Frame *rxFrame);
-CAN_Frame StartStorage();
+CAN_Frame StartStorage(void);
+CAN_Frame StartDischarge(void);
 extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes
 extern volatile float set_current;
 extern volatile float charging_current; 

@@ -144,6 +144,9 @@ void uart_send_frame(const char *prefix, CAN_Frame *frame);
 #endif
 /* USER CODE END Private defines */
 
+// Thread-safe voltage access
+VoltageValues get_battery_voltages_safe(void);
+
 #ifdef __cplusplus
 }
 #endif
