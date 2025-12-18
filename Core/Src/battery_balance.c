@@ -17,6 +17,7 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal_dma.h"
 
 extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim4;
@@ -219,4 +220,10 @@ void balance_all_cells(float *cell_voltages, uint8_t num_cells, float deadband) 
     for (uint8_t i = 0; i < num_cells; ++i) {
         balance_controller_update(i, cell_voltages[i], reference);
     }
+}
+
+void StartStorageMode() {
+    // Prepare hardware state for storage charging/balancing.
+    balance_disable_all_cells();
+    charger_enter_storage_mode();
 }
