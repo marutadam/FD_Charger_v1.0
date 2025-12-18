@@ -91,7 +91,7 @@ void ParamStore_Save_CAN_ID(uint8_t id) {
 uint8_t ParamStore_Read_CAN_ID(void) {
     FlashParams params = ReadAllParams();
     if (params.can_id < 0x71 || params.can_id > 0x77) // Validate range
-        params.can_id = 0x77;
+        params.can_id = 0x75;
 
     SaveAllParams(params);
     return params.can_id;
