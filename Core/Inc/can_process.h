@@ -24,6 +24,7 @@ typedef enum {
     CMD_READ_CURRENT_POWER = 0x0B,
     CMD_DISCHARGE = 0x0C,
     CMD_STORAGE = 0x0D,
+    CMD_STORAGE_STOP = 0x0E,
     CMD_CONFIG_BALANCE = 0xF0,
     CMD_UNKNOWN = 0xFF
 } CAN_COMMAND;
@@ -57,6 +58,7 @@ CAN_Frame CreateResponse(CAN_COMMAND cmd);
 CAN_Frame CheckSystem(void);
 CAN_Frame ConfigBalance(CAN_Frame *rxFrame);
 CAN_Frame StartStorage(void);
+CAN_Frame StopStorage(void);
 CAN_Frame StartDischarge(void);
 extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes
 extern volatile float set_current;

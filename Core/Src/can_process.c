@@ -1,3 +1,4 @@
+#include "battery_balance.h"
 #include "main.h"
 #include "param_types.h"
 extern SPI_HandleTypeDef hspi1;
@@ -94,6 +95,9 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
                 break;
             case CMD_STORAGE:
                 response = StartStorage();
+                break;
+            case CMD_STORAGE_STOP:
+                response = StopStorage();
                 break;
             case CMD_DISCHARGE:
                 response = StartDischarge();
@@ -283,6 +287,15 @@ CAN_Frame StartStorage() {
     charger_set_targets(end_voltage_storage, set_current);
     StartStorageMode();
     is_battery_charging = true;
+    return response;
+}
+CAN_Frame StopStorage() {
+    CAN_Frame response = CreateResponse(CMD_STORAGE_STOP);
+    response.data[7] = 0x01;
+    charger_set_targets(end_voltage_storage, set_current);
+    balance_disable_all_cells();
+    charger_disable_with_reason("Stop storage mode");
+    is_battery_charging = false;
     return response;
 }
 
