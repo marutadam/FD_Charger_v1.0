@@ -2,6 +2,23 @@
 #include "cmsis_os2.h"
 #include <math.h> // Add this include
 
+// Exponential Moving Average (EMA) filter for smoother voltage measurements
+// Lower alpha = more smoothing (more stable but slower response)
+// Higher alpha = less smoothing (faster response but noisier)
+#define VOLTAGE_FILTER_ALPHA 0.2f  // 0.0 - 1.0
+#define CURRENT_FILTER_ALPHA 0.15f // Smoother filter for current
+
+// Filtered measurement values buffer
+static VoltageValues filtered_voltages = {0};
+static uint8_t filter_initialized = 0;
+
+// Exponential Moving Average filter
+static float apply_ema_filter(float new_value, float previous_filtered, float alpha) {
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    return (alpha * new_value) + ((1.0f - alpha) * previous_filtered);
+}
+
 #define ADS1115_ADDR 0x48 // Default I2C address
 #define ADS1115_ADDR_2 0x49 // Second I2C address
 #define ADS1115_ADDR_3 0x4A // Default I2C address
@@ -204,7 +221,30 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
     for (int i = 0; i < 6; ++i) {
         values.cell_raw[i] = rawCells[i];
     }
-    return values;
+    
+    // Initialize filter on first call
+    if (!filter_initialized) {
+        filtered_voltages = values;
+        filter_initialized = 1;
+        return values;  // Return unfiltered on first read
+    }
+    
+    // Apply exponential filter to all measurements for stability
+    for (int i = 0; i < 6; ++i) {
+        filtered_voltages.cell[i] = apply_ema_filter(values.cell[i], filtered_voltages.cell[i], VOLTAGE_FILTER_ALPHA);
+    }
+    filtered_voltages.battery_voltage = apply_ema_filter(values.battery_voltage, filtered_voltages.battery_voltage, VOLTAGE_FILTER_ALPHA);
+    filtered_voltages.buck_voltage = apply_ema_filter(values.buck_voltage, filtered_voltages.buck_voltage, VOLTAGE_FILTER_ALPHA);
+    filtered_voltages.shunt_voltage = apply_ema_filter(values.shunt_voltage, filtered_voltages.shunt_voltage, VOLTAGE_FILTER_ALPHA);
+    filtered_voltages.current = apply_ema_filter(values.current, filtered_voltages.current, CURRENT_FILTER_ALPHA);
+    
+    // Keep raw ADC values unfiltered
+    for (int i = 0; i < 6; ++i) {
+        filtered_voltages.cell_raw[i] = values.cell_raw[i];
+    }
+    filtered_voltages.current_raw = values.current_raw;
+    
+    return filtered_voltages;
 }
 
 void print_all_voltages_uart(const VoltageValues *values)
