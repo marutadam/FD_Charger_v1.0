@@ -109,7 +109,7 @@ const osMutexAttr_t voltageDataMutex_attributes = {
 /* USER CODE BEGIN PV */
 // Global variables to store settings
 volatile float end_voltage = 24.6f;
-volatile float end_voltage_storage = 22.2f; // default ~3.7V per cell for 6S
+volatile float end_voltage_storage = 20.2f; // default ~3.7V per cell for 6S
 volatile float set_current = 2.0f;
 volatile uint8_t system_state = 0x00; // 0x00 = System ok, 0x0X = error codes
 volatile float charging_current = 3.5f;
@@ -248,6 +248,9 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  
+  // Disable all balancer PWM channels on startup
+  balance_disable_all_cells();
 
   ChargerControllerCfg charger_cfg = {
     // PI gains tuned down to prevent oscillation and overshoot.
@@ -1078,6 +1081,9 @@ void ChargerTaskHandler(void *argument)
     // This function checks fan speed and can set a fault flag.
     CalculateFanRPM(charger_get_update_period_ms());
 
+    // Print balancer duty status
+    printBalanceDuty();
+
     // The task will now sleep for the duration configured in the charger settings.
     osDelay(charger_get_update_period_ms());
   }
@@ -1187,6 +1193,7 @@ void BalanceTaskHandler(void *argument)
   {
     VoltageValues snapshot = get_battery_voltages_safe();  // Thread-safe read with mutex
     bool can_balance = true;
+    can_balance = false;
 
     // Track the minimum and maximum cell to understand pack imbalance.
     float lowest = snapshot.cell[0];
