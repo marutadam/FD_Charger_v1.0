@@ -40,6 +40,7 @@ void enable_cell_balance(uint8_t cell_index, uint8_t duty_percent);
 void disable_cell_balance(uint8_t cell_index);
 void balance_disable_all_cells(void);
 uint8_t balance_get_last_duty(uint8_t cell_index);
+void printBalanceDuty(void);
 void StartStorageMode(void);
 
 #ifdef __cplusplus

@@ -201,6 +201,17 @@ uint8_t balance_get_last_duty(uint8_t cell_index) {
     return cell_last_duty[cell_index];
 }
 
+void printBalanceDuty(void) {
+    extern UART_HandleTypeDef huart1;
+    char buffer[120];
+    int len = snprintf(buffer, sizeof(buffer), 
+                       "[BALANCE] Duty[C1-C6]: %3u%% %3u%% %3u%% %3u%% %3u%% %3u%%\r\n",
+                       balance_get_last_duty(0), balance_get_last_duty(1),
+                       balance_get_last_duty(2), balance_get_last_duty(3),
+                       balance_get_last_duty(4), balance_get_last_duty(5));
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, 100);
+}
+
 void balance_cell(uint8_t cell_index, float *cell_voltages, float deadband) {
     if (cell_index >= MAX_CELLS || cell_voltages == NULL) {
         return;
