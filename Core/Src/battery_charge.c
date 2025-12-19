@@ -16,7 +16,7 @@
 
 
 #define FAN_PULSES_PER_REV 2 
-#define FAN_DEBUG 1
+// #define FAN_DEBUG 1
 
 extern TIM_HandleTypeDef htim2;
 extern UART_HandleTypeDef huart1;
@@ -364,6 +364,17 @@ void charger_enter_storage_mode(void) {
     if (!charger.enabled) {
         charger_enable();
     }
+    #ifdef DEBUG_BALANCE
+    {
+        int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
+        int current_centi = (int)lroundf(charger.target_current * 100.0f);
+        charger_log("[BAL] Enter storage: enabled=%u, state=%s, targets %d.%02d V, %d.%02d A\r\n",
+                    (unsigned)charger.enabled,
+                    charger_state_to_string(charger.state),
+                    voltage_centi / 100, abs(voltage_centi % 100),
+                    current_centi / 100, abs(current_centi % 100));
+    }
+    #endif
     ChargerState prev = charger.state;
     charger.state = CHARGER_STATE_STORAGE;
     charger_log_state_change(prev, charger.state, "enter storage mode");
@@ -447,8 +458,8 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
     }
 }
 
-#define STORAGE_BALANCE_KP           800.0f
-#define STORAGE_BALANCE_DEADBAND_V    0.010f   // ignore deltas below 10 mV
+#define STORAGE_BALANCE_KP           100.0f
+#define STORAGE_BALANCE_DEADBAND_V    0.050f   // ignore deltas below 10 mV
 #define STORAGE_BALANCE_MAX_DUTY      80U
 #define STORAGE_CELL_TARGET_V         3.70f
 
@@ -489,11 +500,11 @@ static void charger_storage_update(const VoltageValues *meas) {
     }
 
     // When every cell meets the storage target, stop charging/balancing.
-    if (lowest >= STORAGE_CELL_TARGET_V) {
-        balance_disable_all_cells();
-        charger_disable_with_reason("storage target reached");
-        return;
-    }
+    // if (lowest >= STORAGE_CELL_TARGET_V) {
+    //     balance_disable_all_cells();
+    //     charger_disable_with_reason("storage target reached");
+    //     return;
+    // }
 
     // If cells are already even, make sure all bleed paths are off.
     if ((highest - lowest) < STORAGE_BALANCE_DEADBAND_V) {
