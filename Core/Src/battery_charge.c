@@ -18,6 +18,9 @@
 #define FAN_PULSES_PER_REV 2 
 // #define FAN_DEBUG 1
 
+// Per-cell overvoltage guard (applied in charger_update)
+#define CELL_OVERVOLTAGE_LIMIT 4.1f
+
 extern TIM_HandleTypeDef htim2;
 extern UART_HandleTypeDef huart1;
 
@@ -47,6 +50,7 @@ static const char *charger_state_to_string(ChargerState state);
 static void charger_log_state_change(ChargerState prev_state, ChargerState new_state, const char *reason);
 static void charger_disable_internal(const char *reason);
 static void charger_storage_update(const VoltageValues *meas);
+static void charger_charging_balance_update(const VoltageValues *meas);
 
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max) {
     controller->kp = kp;
@@ -265,6 +269,20 @@ void charger_update(const VoltageValues *meas) {
     const float VOLTAGE_SLOW_GAP = 0.25f; // Slow ramp when buck almost equals battery
     const float VOLTAGE_MED_GAP  = 1.0f;  // Medium ramp threshold
 
+    // --- CELL OVERVOLTAGE PROTECTION ---
+    // Check if any cell exceeds safe charging voltage and reduce current
+    uint8_t cell_overvoltage_detected = 0;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (meas->cell[i] > CELL_OVERVOLTAGE_LIMIT) {
+            cell_overvoltage_detected = 1;
+            charger_faults.overvoltage = true;
+            #ifdef DEBUG_BALANCE
+            charger_log("[PROTECT] Cell %d overvoltage: %.3f V (limit: %.1f V)\r\n", i+1, meas->cell[i], CELL_OVERVOLTAGE_LIMIT);
+            #endif
+            break;
+        }
+    }
+
     switch (charger.state) {
         case CHARGER_STATE_CC:
             // Drive based on how far buck voltage is above the battery.
@@ -284,8 +302,14 @@ void charger_update(const VoltageValues *meas) {
                 }
                 if(meas->current > charger.target_current+0.4f) {
                     charger.duty -= DUTY_STEP;
+                                // Reduce duty if any cell overvoltage detected
+                                if (cell_overvoltage_detected) {
+                                    charger.duty -= DUTY_STEP;  // Softer reduction to avoid oscillation
+                                }
                 }
             }
+            // Balance cells during CC charging
+            charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_CV:
@@ -297,8 +321,14 @@ void charger_update(const VoltageValues *meas) {
             }
             // Additionally, ensure we don't exceed the target current as a safety measure
             if (meas->current > charger.target_current) {
+                            // Reduce duty if any cell overvoltage detected
+                            if (cell_overvoltage_detected) {
+                                charger.duty -= DUTY_STEP;  // Softer reduction to avoid oscillation
+                            }
                 charger.duty -= DUTY_STEP;
             }
+            // Balance cells during CV charging
+            charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_COMPLETE:
@@ -458,10 +488,33 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
     }
 }
 
+// Charging mode balance (lighter balancing to avoid disrupting charge current)
+#define CHARGING_BALANCE_KP           30.0f   // Lighter gain for charging
+#define CHARGING_BALANCE_DEADBAND_V   0.100f  // Wider deadband during charging
+#define CHARGING_BALANCE_MAX_DUTY     40U     // Lower max duty during charge
+
 #define STORAGE_BALANCE_KP           100.0f
 #define STORAGE_BALANCE_DEADBAND_V    0.050f   // ignore deltas below 10 mV
 #define STORAGE_BALANCE_MAX_DUTY      80U
 #define STORAGE_CELL_TARGET_V         3.70f
+
+static uint8_t charge_compute_duty(float delta_v) {
+    if (delta_v <= 0.0f) {
+        return 0U;
+    }
+    float duty = delta_v * CHARGING_BALANCE_KP;
+    if (duty > (float)CHARGING_BALANCE_MAX_DUTY) {
+        duty = (float)CHARGING_BALANCE_MAX_DUTY;
+    }
+    if (duty < 0.0f) {
+        duty = 0.0f;
+    }
+    uint8_t duty_u8 = (uint8_t)duty;
+    if (duty_u8 == 0U && duty > 0.0f) {
+        duty_u8 = 1U;
+    }
+    return duty_u8;
+}
 
 static uint8_t storage_compute_duty(float delta_v) {
     if (delta_v <= 0.0f) {
@@ -479,6 +532,45 @@ static uint8_t storage_compute_duty(float delta_v) {
         duty_u8 = 1U;
     }
     return duty_u8;
+}
+
+static void charger_charging_balance_update(const VoltageValues *meas) {
+    if (meas == NULL) {
+        balance_disable_all_cells();
+        return;
+    }
+
+    const uint8_t cell_count = 6U;
+    float lowest = meas->cell[0];
+    float highest = meas->cell[0];
+    for (uint8_t i = 1; i < cell_count; ++i) {
+        if (meas->cell[i] < lowest) {
+            lowest = meas->cell[i];
+        }
+        if (meas->cell[i] > highest) {
+            highest = meas->cell[i];
+        }
+    }
+
+    // If cells are already even, make sure all bleed paths are off.
+    if ((highest - lowest) < CHARGING_BALANCE_DEADBAND_V) {
+        balance_disable_all_cells();
+        return;
+    }
+
+    for (uint8_t i = 0; i < cell_count; ++i) {
+        float delta = meas->cell[i] - lowest;
+        if (delta <= CHARGING_BALANCE_DEADBAND_V) {
+            disable_cell_balance(i);
+            continue;
+        }
+        uint8_t duty = charge_compute_duty(delta - CHARGING_BALANCE_DEADBAND_V);
+        if (duty == 0U) {
+            disable_cell_balance(i);
+        } else {
+            enable_cell_balance(i, duty);
+        }
+    }
 }
 
 static void charger_storage_update(const VoltageValues *meas) {
