@@ -140,9 +140,12 @@ void uart_send_frame(const char *prefix, CAN_Frame *frame);
 #endif
 
 #ifndef DEBUG_CHARGER_TASK
-#define DEBUG_CHARGER_TASK 1
+#define DEBUG_CHARGER_TASK 0
 #endif
 /* USER CODE END Private defines */
+
+// Manual balance mode flag - when true, automatic balancing is disabled
+extern volatile uint8_t manual_balance_mode;
 
 // Thread-safe voltage access
 VoltageValues get_battery_voltages_safe(void);

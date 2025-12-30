@@ -31,6 +31,7 @@
 #include "param_types.h"
 #include <stdlib.h>
 #include "battery_charge.h"
+#include "battery_balance.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,6 +61,9 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
+
+// Manual balance mode flag
+volatile uint8_t manual_balance_mode = 0;
 
 /* Definitions for uartTask */
 osThreadId_t uartTaskHandle;
@@ -1082,7 +1086,9 @@ void ChargerTaskHandler(void *argument)
     CalculateFanRPM(charger_get_update_period_ms());
 
     // Print balancer duty status
-    printBalanceDuty();
+    if (DEBUG_BALANCE) {
+      printBalanceDuty();
+    }
 
     // The task will now sleep for the duration configured in the charger settings.
     osDelay(charger_get_update_period_ms());
@@ -1191,6 +1197,12 @@ void BalanceTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
+    // Skip automatic balancing if manual mode is active
+    if (manual_balance_mode) {
+      osDelay(balance_period_ms);
+      continue;
+    }
+    
     VoltageValues snapshot = get_battery_voltages_safe();  // Thread-safe read with mutex
     bool can_balance = true;
     can_balance = false;
