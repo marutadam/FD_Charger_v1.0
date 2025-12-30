@@ -26,6 +26,9 @@ typedef enum {
     CMD_STORAGE = 0x0D,
     CMD_STORAGE_STOP = 0x0E,
     CMD_CONFIG_BALANCE = 0xF0,
+    CMD_TEST_BALANCE = 0x55,
+    CMD_SET_CELL_BALANCE = 0x56,
+    CMD_MANUAL_BALANCE_CTRL = 0x57,
     CMD_UNKNOWN = 0xFF
 } CAN_COMMAND;
 
@@ -58,6 +61,9 @@ CAN_Frame CreateResponse(CAN_COMMAND cmd);
 CAN_Frame CheckSystem(void);
 CAN_Frame ConfigBalance(CAN_Frame *rxFrame);
 CAN_Frame StartStorage(void);
+CAN_Frame TestBalance(uint8_t enable);
+CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent);
+CAN_Frame ManualBalanceCtrl(uint8_t enable);
 CAN_Frame StopStorage(void);
 CAN_Frame StartDischarge(void);
 extern volatile uint8_t system_state; // 0x00 = System ok, 0x0X = error codes

@@ -102,6 +102,15 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_DISCHARGE:
                 response = StartDischarge();
                 break;
+            case CMD_TEST_BALANCE:
+                response = TestBalance(rxFrame->data[7]);
+                break;
+            case CMD_SET_CELL_BALANCE:
+                response = SetCellBalance(rxFrame->data[6], rxFrame->data[7]);
+                break;
+            case CMD_MANUAL_BALANCE_CTRL:
+                response = ManualBalanceCtrl(rxFrame->data[7]);
+                break;
             default:
                 // Unknown command
                 return;
@@ -309,5 +318,115 @@ CAN_Frame StartDischarge() {
     is_battery_charging = false;
     
     response.data[7] = 0x01; // Acknowledge
+    return response;
+}
+
+static uint8_t test_balance_running = 0;
+
+CAN_Frame TestBalance(uint8_t enable) {
+    extern volatile uint8_t manual_balance_mode;
+    CAN_Frame response = CreateResponse(CMD_TEST_BALANCE);
+    clear_response_data(&response);
+    
+    if (enable == 0x01) {
+        // Start test
+        if (!test_balance_running) {
+            test_balance_running = 1;
+            manual_balance_mode = 1; // Disable automatic balancing
+            // Sequential test loop
+            for (uint8_t cell = 0; cell < 6; cell++) {
+                enable_cell_balance(cell, 30);
+                osDelay(10000);
+                disable_cell_balance(cell);
+            }
+            test_balance_running = 0;
+            manual_balance_mode = 0; // Re-enable automatic balancing
+            response.data[7] = 0x01; // Success
+        } else {
+            response.data[7] = 0x02; // Already running
+        }
+    } else if (enable == 0x00) {
+        // Stop test - disable all cells
+        balance_disable_all_cells();
+        test_balance_running = 0;
+        manual_balance_mode = 0; // Re-enable automatic balancing
+        response.data[7] = 0x01; // Success
+    } else {
+        response.data[7] = 0xFF; // Invalid parameter
+    }
+    
+    return response;
+}
+
+CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent) {
+    extern volatile uint8_t manual_balance_mode;
+    CAN_Frame response = CreateResponse(CMD_SET_CELL_BALANCE);
+    clear_response_data(&response);
+    
+    // Validate cell number (1-6 in user terms, 0-5 internally)
+    if (cell_num < 1 || cell_num > 6) {
+        response.data[6] = cell_num;
+        response.data[7] = 0xFE; // Invalid cell number
+        return response;
+    }
+    
+    // Validate duty percent (0-100)
+    if (duty_percent > 100) {
+        response.data[6] = cell_num;
+        response.data[7] = 0xFD; // Invalid duty percent
+        return response;
+    }
+    
+    // Convert to 0-based index
+    uint8_t cell_index = cell_num - 1;
+    
+    // Enable manual mode when setting any PWM
+    if (duty_percent > 0) {
+        manual_balance_mode = 1;
+    }
+    
+    // Set the balance PWM
+    if (duty_percent == 0) {
+        disable_cell_balance(cell_index);
+        // Check if all cells are disabled, if so exit manual mode
+        uint8_t any_active = 0;
+        for (uint8_t i = 0; i < 6; i++) {
+            if (balance_get_last_duty(i) > 0) {
+                any_active = 1;
+                break;
+            }
+        }
+        if (!any_active) {
+            manual_balance_mode = 0;
+        }
+    } else {
+        enable_cell_balance(cell_index, duty_percent);
+    }
+    
+    // Echo back the values and success status
+    response.data[6] = cell_num;
+    response.data[7] = duty_percent;
+    
+    return response;
+}
+
+CAN_Frame ManualBalanceCtrl(uint8_t enable) {
+    extern volatile uint8_t manual_balance_mode;
+    CAN_Frame response = CreateResponse(CMD_MANUAL_BALANCE_CTRL);
+    clear_response_data(&response);
+    
+    if (enable == 0x01) {
+        // Enable manual mode
+        manual_balance_mode = 1;
+        response.data[7] = 0x01; // Success - manual mode ON
+    } else if (enable == 0x00) {
+        // Disable manual mode
+        manual_balance_mode = 0;
+        balance_disable_all_cells();
+        response.data[7] = 0x01; // Success - manual mode OFF
+    } else {
+        response.data[7] = 0xFF; // Invalid parameter
+    }
+    
     return response;
 }
