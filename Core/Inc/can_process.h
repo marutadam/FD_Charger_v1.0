@@ -12,8 +12,8 @@
 
 typedef enum {
     CMD_CHECK = 0x01,
-    CMD_START = 0x02,
-    CMD_STOP = 0x03,
+    CMD_START_CHARGING = 0x02,
+    CMD_STOP_CHARGING = 0x03,
     CMD_RESET = 0x04,
     CMD_SET_END_VOLTAGE = 0x05,
     CMD_SET_CURRENT = 0x06,
@@ -46,7 +46,7 @@ extern "C" {
 #endif
 
 void ProcessCanFrame(CAN_Frame *rxFrame);
-CAN_Frame StartCharging();
+CAN_Frame StartCharging(uint8_t balance_flag);
 CAN_Frame StopCharging();
 void ResetSystem(void);
 CAN_Frame SetEndVoltage(uint8_t voltage);

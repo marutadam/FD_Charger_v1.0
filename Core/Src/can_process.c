@@ -55,11 +55,11 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
         // Example: handle commands using enum
         CAN_Frame response;
         switch (cmd) {
-            case CMD_START:
-                response = StartCharging();
+            case CMD_START_CHARGING:
+                response = StartCharging(rxFrame->data[7]);
                 is_battery_charging = true;
                 break;
-            case CMD_STOP:
+            case CMD_STOP_CHARGING:
                 response = StopCharging();
                 is_battery_charging = false;
                 break;
@@ -118,25 +118,38 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
                         const char* err_msg = "[WARN] Failed to send response\r\n";
                         HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), UART_TIMEOUT_MS);
                     }
+        return;  // Exit after sending response
     } 
 }
 
 // CAN_GetCommandName removed; use CAN_COMMAND enum directly
 
-CAN_Frame StartCharging() {
-    CAN_Frame response = CreateResponse(CMD_START);
-    response.data[7] = 0x01;
+CAN_Frame StartCharging(uint8_t balance_flag) {
+    extern volatile uint8_t can_balance_enabled;
+    CAN_Frame response = CreateResponse(CMD_START_CHARGING);
     charger_set_targets(end_voltage, set_current);
     charger_enable();
     is_battery_charging = true;
+    
+    // Handle balance flag: 0x02 = enable balance, 0x01 = disable balance
+    if (balance_flag == 0x02) {
+        can_balance_enabled = 1;
+        response.data[7] = 0x02;
+    } else {
+        can_balance_enabled = 0;
+        response.data[7] = 0x01;
+    }
+    
     return response;
-    // Additional logic to start charging can be added here
 }
 CAN_Frame StopCharging() {
-    CAN_Frame response = CreateResponse(CMD_STOP);
+    extern volatile uint8_t can_balance_enabled;
+
+    CAN_Frame response = CreateResponse(CMD_STOP_CHARGING);
     response.data[7] = 0x01;
     charger_disable_with_reason("CAN stop command");
     is_battery_charging = false;
+    can_balance_enabled = 0;
     return response;
     // Additional logic to stop charging can be added here
 }  
@@ -319,7 +332,6 @@ CAN_Frame StartDischarge() {
 }
 
 CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent) {
-    extern volatile uint8_t manual_balance_mode;
     CAN_Frame response = CreateResponse(CMD_SET_CELL_BALANCE);
     clear_response_data(&response);
     
@@ -340,25 +352,9 @@ CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent) {
     // Convert to 0-based index
     uint8_t cell_index = cell_num - 1;
     
-    // Enable manual mode when setting any PWM
-    if (duty_percent > 0) {
-        manual_balance_mode = 1;
-    }
-    
     // Set the balance PWM
     if (duty_percent == 0) {
         disable_cell_balance(cell_index);
-        // Check if all cells are disabled, if so exit manual mode
-        uint8_t any_active = 0;
-        for (uint8_t i = 0; i < 6; i++) {
-            if (balance_get_last_duty(i) > 0) {
-                any_active = 1;
-                break;
-            }
-        }
-        if (!any_active) {
-            manual_balance_mode = 0;
-        }
     } else {
         enable_cell_balance(cell_index, duty_percent);
     }
@@ -371,19 +367,17 @@ CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent) {
 }
 
 CAN_Frame ManualBalanceCtrl(uint8_t enable) {
-    extern volatile uint8_t manual_balance_mode;
     CAN_Frame response = CreateResponse(CMD_MANUAL_BALANCE_CTRL);
     clear_response_data(&response);
     
     if (enable == 0x01) {
-        // Enable manual mode
-        manual_balance_mode = 1;
-        response.data[7] = 0x01; // Success - manual mode ON
-    } else if (enable == 0x00) {
-        // Disable manual mode
-        manual_balance_mode = 0;
+        // Enable manual mode - disable all cells
         balance_disable_all_cells();
-        response.data[7] = 0x01; // Success - manual mode OFF
+        response.data[7] = 0x01; // Success
+    } else if (enable == 0x00) {
+        // Disable manual mode - disable all cells
+        balance_disable_all_cells();
+        response.data[7] = 0x01; // Success
     } else {
         response.data[7] = 0xFF; // Invalid parameter
     }
