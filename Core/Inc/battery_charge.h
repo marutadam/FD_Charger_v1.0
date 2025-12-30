@@ -78,6 +78,8 @@ void charger_enter_storage_mode(void);
 
 ChargerState charger_get_state(void);
 float charger_get_pwm_duty(void);
+float charger_get_pwm_counts_raw(void);
+float charger_get_pwm_counts_max(void);
 uint16_t charger_get_update_period_ms(void);
 void CalculateFanRPM(int measurement_time_ms);
 

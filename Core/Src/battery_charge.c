@@ -419,6 +419,14 @@ float charger_get_pwm_duty(void) {
     return (charger.duty / charger.pwm_counts_max) * 100.0f;
 }
 
+float charger_get_pwm_counts_raw(void) {
+    return charger.duty;
+}
+
+float charger_get_pwm_counts_max(void) {
+    return charger.pwm_counts_max;
+}
+
 uint16_t charger_get_update_period_ms(void) {
     return charger.cfg.update_period_ms;
 }

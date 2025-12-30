@@ -185,6 +185,74 @@ static inline void set_battery_voltages_safe(const VoltageValues *voltages)
   osMutexRelease(voltageDataMutexHandle);
 }
 
+#if DEBUG_TELEMETRY
+static const char *charger_state_to_string_public(ChargerState state)
+{
+  switch (state) {
+    case CHARGER_STATE_IDLE: return "IDLE";
+    case CHARGER_STATE_CC: return "CC";
+    case CHARGER_STATE_CV: return "CV";
+    case CHARGER_STATE_COMPLETE: return "COMPLETE";
+    case CHARGER_STATE_FAULT: return "FAULT";
+    case CHARGER_STATE_STORAGE: return "STORAGE";
+    default: return "UNKNOWN";
+  }
+}
+
+static void uart_send_status_json(void)
+{
+  VoltageValues v = get_battery_voltages_safe();
+  float pack_v = 0.0f;
+  for (uint8_t i = 0; i < 6; ++i) {
+    pack_v += v.cell[i];
+  }
+
+  uint32_t ts_ms = HAL_GetTick();
+
+  uint8_t duty[6];
+  uint32_t pwm_raw[6];
+  for (uint8_t i = 0; i < 6; ++i) {
+    duty[i] = balance_get_last_duty(i);
+    pwm_raw[i] = balance_get_last_pulse(i);
+  }
+
+  ChargerState st = charger_get_state();
+  float pwm = charger_get_pwm_duty();
+  float pwm_counts = charger_get_pwm_counts_raw();
+  float pwm_counts_max = charger_get_pwm_counts_max();
+
+  char json[512];
+  int len = snprintf(
+      json,
+      sizeof(json),
+      "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%.3f,\"i\":%.3f,\"buck\":%.3f},"
+      "\"cells\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],"
+      "\"balance\":{\"enabled\":%u,\"duties\":[%u,%u,%u,%u,%u,%u],\"pwm_raw\":[%lu,%lu,%lu,%lu,%lu,%lu]},"
+      "\"charger\":{\"state\":\"%s\",\"pwm\":%.2f,\"pwm_raw\":%.0f,\"pwm_max\":%.0f,\"target_v\":%.2f,\"target_i\":%.2f}}\r\n",
+      ts_ms,
+      is_battery_present,
+      pack_v,
+      v.current,
+      v.buck_voltage,
+      v.cell[0], v.cell[1], v.cell[2], v.cell[3], v.cell[4], v.cell[5],
+      can_balance_enabled,
+      duty[0], duty[1], duty[2], duty[3], duty[4], duty[5],
+      pwm_raw[0], pwm_raw[1], pwm_raw[2], pwm_raw[3], pwm_raw[4], pwm_raw[5],
+      charger_state_to_string_public(st),
+      pwm,
+      pwm_counts,
+      pwm_counts_max,
+      end_voltage,
+      set_current);
+
+  if (len > 0 && len < (int)sizeof(json)) {
+    HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 50);
+  }
+}
+#else
+static inline void uart_send_status_json(void) {(void)0;}
+#endif
+
 volatile uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
 
 /* USER CODE END PV */
@@ -939,13 +1007,14 @@ void UartTask(void *argument)
     char cmd[CMD_MAX_LEN];
     uint8_t idx = 0;
     uint8_t last_was_eol = 0;
+  uint32_t last_status_tick = HAL_GetTick();
 
     if (DEBUG_UART_TASK) {
     HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] UART Task started\r\n", 26, HAL_MAX_DELAY);
 }
 for (;;) {
-    // Use timeout of 1000ms instead of forever - prevents hanging
-    if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 1000) == osOK) {
+  // Use shorter timeout to allow periodic status JSON
+  if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 50) == osOK) {
         if ((c == '\r' || c == '\n')) {
             if (!last_was_eol) {
                 cmd[idx] = '\0';
@@ -986,6 +1055,14 @@ for (;;) {
             last_was_eol = 0;
         }
     }
+
+      uint32_t now = HAL_GetTick();
+    #if DEBUG_TELEMETRY
+      if ((now - last_status_tick) >= 500U) {
+        uart_send_status_json();
+        last_status_tick = now;
+      }
+    #endif
     // No longer blocking here - allows other tasks to run
 }
 

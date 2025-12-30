@@ -201,6 +201,19 @@ uint8_t balance_get_last_duty(uint8_t cell_index) {
     return cell_last_duty[cell_index];
 }
 
+uint32_t balance_get_last_pulse(uint8_t cell_index) {
+    if (cell_index >= MAX_CELLS) {
+        return 0U;
+    }
+    uint32_t channel;
+    TIM_HandleTypeDef *htim = cell_timer(cell_index, &channel);
+    if (htim == NULL) {
+        return 0U;
+    }
+    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(htim);
+    return (uint32_t)((cell_last_duty[cell_index] * (arr + 1U)) / 100U);
+}
+
 void printBalanceDuty(void) {
     extern UART_HandleTypeDef huart1;
     extern volatile uint8_t can_balance_enabled;

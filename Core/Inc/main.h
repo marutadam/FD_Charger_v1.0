@@ -132,15 +132,19 @@ void uart_send_frame(const char *prefix, CAN_Frame *frame);
 #endif
 
 #ifndef DEBUG_ADC_TASK
-#define DEBUG_ADC_TASK 1
+#define DEBUG_ADC_TASK 0
 #endif
 
 #ifndef DEBUG_BALANCE
-#define DEBUG_BALANCE 1
+#define DEBUG_BALANCE 0
 #endif
 
 #ifndef DEBUG_CHARGER_TASK
 #define DEBUG_CHARGER_TASK 0
+#endif
+
+#ifndef DEBUG_TELEMETRY
+#define DEBUG_TELEMETRY 1
 #endif
 /* USER CODE END Private defines */
 
