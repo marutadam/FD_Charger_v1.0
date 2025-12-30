@@ -102,9 +102,6 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
             case CMD_DISCHARGE:
                 response = StartDischarge();
                 break;
-            case CMD_TEST_BALANCE:
-                response = TestBalance(rxFrame->data[7]);
-                break;
             case CMD_SET_CELL_BALANCE:
                 response = SetCellBalance(rxFrame->data[6], rxFrame->data[7]);
                 break;
@@ -318,43 +315,6 @@ CAN_Frame StartDischarge() {
     is_battery_charging = false;
     
     response.data[7] = 0x01; // Acknowledge
-    return response;
-}
-
-static uint8_t test_balance_running = 0;
-
-CAN_Frame TestBalance(uint8_t enable) {
-    extern volatile uint8_t manual_balance_mode;
-    CAN_Frame response = CreateResponse(CMD_TEST_BALANCE);
-    clear_response_data(&response);
-    
-    if (enable == 0x01) {
-        // Start test
-        if (!test_balance_running) {
-            test_balance_running = 1;
-            manual_balance_mode = 1; // Disable automatic balancing
-            // Sequential test loop
-            for (uint8_t cell = 0; cell < 6; cell++) {
-                enable_cell_balance(cell, 30);
-                osDelay(10000);
-                disable_cell_balance(cell);
-            }
-            test_balance_running = 0;
-            manual_balance_mode = 0; // Re-enable automatic balancing
-            response.data[7] = 0x01; // Success
-        } else {
-            response.data[7] = 0x02; // Already running
-        }
-    } else if (enable == 0x00) {
-        // Stop test - disable all cells
-        balance_disable_all_cells();
-        test_balance_running = 0;
-        manual_balance_mode = 0; // Re-enable automatic balancing
-        response.data[7] = 0x01; // Success
-    } else {
-        response.data[7] = 0xFF; // Invalid parameter
-    }
-    
     return response;
 }
 
