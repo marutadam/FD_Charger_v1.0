@@ -22,20 +22,20 @@
 extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim4;
 CellPwmConfig battery_cell[6]={
-    {&htim3, TIM_CHANNEL_3}, // CELL1 -> TIM3_CH1
-    {&htim3, TIM_CHANNEL_4}, // CELL2 -> TIM3_CH2
-    {&htim3, TIM_CHANNEL_1}, // CELL3 -> TIM3_CH3
-    {&htim3, TIM_CHANNEL_2}, // CELL4 -> TIM3_CH4
+    {&htim3, TIM_CHANNEL_3}, // CELL1 -> TIM3_CH3 (zamieniona z CELL3)
+    {&htim3, TIM_CHANNEL_4}, // CELL2 -> TIM3_CH4 (zamieniona z CELL4)
+    {&htim3, TIM_CHANNEL_1}, // CELL3 -> TIM3_CH1 (zamieniona z CELL1)
+    {&htim3, TIM_CHANNEL_2}, // CELL4 -> TIM3_CH2 (zamieniona z CELL2)
     {&htim4, TIM_CHANNEL_1}, // CELL5 -> TIM4_CH1
     {&htim4, TIM_CHANNEL_2}  // CELL6 -> TIM4_CH2
 }; // Configuration for PWM timers/channels for each cell
 // Map cell index to timer handle and channel
 static TIM_HandleTypeDef* cell_timer(uint8_t cell_index, uint32_t *channel) {
     switch(cell_index) {
-        case 0: *channel = TIM_CHANNEL_1; return &htim3; // CELL1 -> TIM3_CH1
-        case 1: *channel = TIM_CHANNEL_2; return &htim3; // CELL2 -> TIM3_CH2
-        case 2: *channel = TIM_CHANNEL_3; return &htim3; // CELL3 -> TIM3_CH3
-        case 3: *channel = TIM_CHANNEL_4; return &htim3; // CELL4 -> TIM3_CH4
+        case 0: *channel = TIM_CHANNEL_3; return &htim3; // CELL1 -> TIM3_CH3 (zamieniona z CELL3)
+        case 1: *channel = TIM_CHANNEL_4; return &htim3; // CELL2 -> TIM3_CH4 (zamieniona z CELL4)
+        case 2: *channel = TIM_CHANNEL_1; return &htim3; // CELL3 -> TIM3_CH1 (zamieniona z CELL1)
+        case 3: *channel = TIM_CHANNEL_2; return &htim3; // CELL4 -> TIM3_CH2 (zamieniona z CELL2)
         case 4: *channel = TIM_CHANNEL_1; return &htim4; // CELL5 -> TIM4_CH1
         case 5: *channel = TIM_CHANNEL_2; return &htim4; // CELL6 -> TIM4_CH2
         default: *channel = 0; return NULL;
