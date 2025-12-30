@@ -309,7 +309,7 @@ void charger_update(const VoltageValues *meas) {
                 }
             }
             // Balance cells during CC charging
-            charger_charging_balance_update(meas);
+            // charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_CV:
@@ -328,7 +328,7 @@ void charger_update(const VoltageValues *meas) {
                 charger.duty -= DUTY_STEP;
             }
             // Balance cells during CV charging
-            charger_charging_balance_update(meas);
+            // charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_COMPLETE:
@@ -371,7 +371,9 @@ void charger_update(const VoltageValues *meas) {
             uint32_t percent_int = percent_times_100 / 100;
             uint32_t percent_frac = percent_times_100 % 100;
 
-            charger_log("[CHARGER] PWM Duty: %lu/%lu (%lu.%02lu%%)\r\n",
+
+            charger_log("[CHARGER] Mode: %s | PWM Duty: %lu/%lu (%lu.%02lu%%)\r\n",
+                        charger_state_to_string(charger.state),
                         (unsigned long)duty_counts_int,
                         (unsigned long)lroundf(charger.pwm_counts_max),
                         (unsigned long)percent_int,
@@ -489,13 +491,13 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
 }
 
 // Charging mode balance (lighter balancing to avoid disrupting charge current)
-#define CHARGING_BALANCE_KP           30.0f   // Lighter gain for charging
-#define CHARGING_BALANCE_DEADBAND_V   0.100f  // Wider deadband during charging
+#define CHARGING_BALANCE_KP           300.0f   // Lighter gain for charging
+#define CHARGING_BALANCE_DEADBAND_V   0.050f  // Wider deadband during charging
 #define CHARGING_BALANCE_MAX_DUTY     40U     // Lower max duty during charge
 
-#define STORAGE_BALANCE_KP           100.0f
-#define STORAGE_BALANCE_DEADBAND_V    0.050f   // ignore deltas below 10 mV
-#define STORAGE_BALANCE_MAX_DUTY      80U
+#define STORAGE_BALANCE_KP           150.0f
+#define STORAGE_BALANCE_DEADBAND_V    0.030f   // ignore deltas below 6 mV
+#define STORAGE_BALANCE_MAX_DUTY      95U
 #define STORAGE_CELL_TARGET_V         3.70f
 
 static uint8_t charge_compute_duty(float delta_v) {
