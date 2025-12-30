@@ -62,8 +62,8 @@ TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
 
-// Manual balance mode flag
-volatile uint8_t manual_balance_mode = 0;
+// Global balance enable flag
+volatile uint8_t can_balance_enabled = 0;
 
 /* Definitions for uartTask */
 osThreadId_t uartTaskHandle;
@@ -1184,28 +1184,24 @@ void AdcTaskHandler(void *argument)
 void BalanceTaskHandler(void *argument)
 {
   /* USER CODE BEGIN BalanceTaskHandler */
-  const uint32_t balance_period_ms = 200U;
+  const uint32_t balance_period_ms = 1000U;
   const float balance_deadband_v = 0.010f;   // 10 mV window around the lowest cell
   const float min_cell_for_balance = 3.0f;   // skip balancing if pack is deeply discharged
 
-  balance_controller_configure(400.0f,   // ~20% duty for a 50 mV delta
-                               0.03f,    // enable threshold in volts
-                               0.01f,    // disable threshold
+  balance_controller_configure(200.0f,   // ~20% duty for a 50 mV delta
+                               0.02f,    // enable threshold in volts (20mV)
+                               0.01f,    // disable threshold (10mV)
                                250U,     // minimum on-time in ms
                                60U);     // max PWM duty percent
+
+  // IMPORTANT: Balancing is DISABLED by default and only enabled via CAN command
+  can_balance_enabled = 0;
 
   /* Infinite loop */
   for(;;)
   {
-    // Skip automatic balancing if manual mode is active
-    if (manual_balance_mode) {
-      osDelay(balance_period_ms);
-      continue;
-    }
-    
     VoltageValues snapshot = get_battery_voltages_safe();  // Thread-safe read with mutex
-    bool can_balance = true;
-    can_balance = false;
+    bool can_balance = can_balance_enabled;  // Use global enable flag
 
     // Track the minimum and maximum cell to understand pack imbalance.
     float lowest = snapshot.cell[0];
@@ -1219,28 +1215,31 @@ void BalanceTaskHandler(void *argument)
       }
     }
 
+    // Calculate spread for all cells (needed for debug regardless of balance state)
+    float spread = highest - lowest;
+
     // Skip balancing when the pack is disconnected or deeply discharged.
     if (!is_battery_present || lowest < min_cell_for_balance) {
       can_balance = false;
     }
 
-    // Require a minimum spread before enabling balancing to avoid chattering.
+    // Require sufficient spread before enabling balancing (cells are imbalanced enough to need balancing)
+    // Disable when spread drops below deadband (cells are sufficiently balanced)
     if (can_balance) {
-      float spread = highest - lowest;
-      if (spread < (0.03f + balance_deadband_v)) {
-        can_balance = false;
+      if (spread < balance_deadband_v) {
+        can_balance = false;  // Spread too small, balancing done
       }
     }
 
-    // Turn everything off and wait if balancing is not allowed in this cycle.
-    if (!can_balance) {
-      balance_disable_all_cells();
-      osDelay(balance_period_ms);
-      continue;
-    }
 
-    // Actively balance all cells toward the lowest cell + deadband window.
-    balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+    // Turn off balancing when not allowed, otherwise run balance controllers
+    if (!can_balance) {
+      balance_disable_all_cells();  // Turns off all PWM and resets state
+    } else {
+      // Actively balance all cells toward the lowest cell + deadband window.
+      // (debug output is in balance_all_cells() to avoid UART collision)
+      balance_all_cells(snapshot.cell, 6, balance_deadband_v);
+    }
 
     osDelay(balance_period_ms);
   }
