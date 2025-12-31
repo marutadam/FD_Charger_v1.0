@@ -117,7 +117,6 @@ volatile float end_voltage = 24.6f;
 volatile float end_voltage_storage = 20.2f; // default ~3.7V per cell for 6S
 volatile float set_current = 2.0f;
 volatile uint8_t system_state = 0x00; // 0x00 = System ok, 0x0X = error codes
-volatile float charging_current = 3.5f;
 volatile uint16_t charged_mah = 12345;
 volatile uint16_t charging_power = 6572;
 volatile uint8_t is_battery_present = 0;
@@ -300,7 +299,7 @@ static void uart_send_status_json(void)
       "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%d.%03d,\"i\":%d.%03d,\"buck\":%d.%03d,\"battery\":%d.%03d,\"shunt\":%d.%03d},"
       "\"cells\":[%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d],"
       "\"balance\":{\"enabled\":%u,\"duties\":[%u,%u,%u,%u,%u,%u],\"pwm_raw\":[%lu,%lu,%lu,%lu,%lu,%lu]},"
-      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d}}\r\n",
+      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d,\"charged_mah\":%u}}\r\n",
       ts_ms,
       is_battery_present,
       pack_v_i, pack_v_f, curr_i, curr_f, buck_i, buck_f, batt_i, batt_f, shunt_i, shunt_f,
@@ -309,7 +308,7 @@ static void uart_send_status_json(void)
       duty[0], duty[1], duty[2], duty[3], duty[4], duty[5],
       pwm_raw[0], pwm_raw[1], pwm_raw[2], pwm_raw[3], pwm_raw[4], pwm_raw[5],
       charger_state_to_string_public(st),
-      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f);
+      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f, charged_mah);
 
   if (len > 0 && len < (int)sizeof(json)) {
     (void)HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 200);
@@ -1156,7 +1155,7 @@ void CanTaskHandler(void *argument)
 {
   /* USER CODE BEGIN CanTaskHandler */
   CAN_Frame rxFrame;
-    
+
   // Send startup message
   const char* task_start = "[INIT] CAN Task started\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
@@ -1204,14 +1203,35 @@ void CanTaskHandler(void *argument)
 void ChargerTaskHandler(void *argument)
 {
   /* USER CODE BEGIN ChargerTaskHandler */
+  static uint8_t was_charging = 0;
+  static float accumulated_mah = 0.0f;
+  
   /* Infinite loop */
   for(;;)
   {
     if(is_battery_charging && is_battery_present)
     {
+      // Detect start of new charging session and reset counter
+      if (!was_charging) {
+        charged_mah = 0;
+        accumulated_mah = 0.0f;
+        was_charging = 1;
+      }
+      
       // The PI controller is now active.
       // It will handle CC/CV phases and PWM duty cycle adjustments.
       charger_update(&current_battery_voltages);
+      
+      // Accumulate charged mAh: mAh = (current_A * time_ms / 3600.0)
+      VoltageValues v = get_battery_voltages_safe();
+      float current_a = v.current;
+      uint32_t period_ms = charger_get_update_period_ms();
+      
+      if (current_a > 0.0f) {
+        float mah_delta = (current_a * (float)period_ms) / 3600.0f;
+        accumulated_mah += mah_delta;
+        charged_mah = (uint16_t)accumulated_mah;
+      }
     }
     else
     {
@@ -1226,6 +1246,7 @@ void ChargerTaskHandler(void *argument)
         reason = "charger idle guard";
       }
       charger_disable_with_reason(reason);
+      was_charging = 0;  // Reset flag when not charging
     }
 
     // This function checks fan speed and can set a fault flag.
