@@ -1176,8 +1176,6 @@ void CanTaskHandler(void *argument)
 
     // Modular CAN frame processing
     ProcessCanFrame(&rxFrame);
-    int len = snprintf(uart_buffer, sizeof(uart_buffer), "[CAN] Frame received\r\n");
-        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
         }
     }
     
@@ -1187,14 +1185,10 @@ void CanTaskHandler(void *argument)
         error_check_count = 0;
         uint8_t error = MCP2515_CheckError(&hspi1);
         if (error != 0) {
-            int len = snprintf(uart_buffer, sizeof(uart_buffer), "[CAN] Error: 0x%02X\r\n", error);
-            HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, HAL_MAX_DELAY);
-            
-            // Clear error flags by writing 0 to EFLG register
-            MCP2515_WriteRegister(&hspi1, MCP2515_EFLG, 0x00);
-            
-            // Also clear interrupt flags
-            MCP2515_WriteRegister(&hspi1, MCP2515_CANINTF, 0x00);
+          // Clear error flags by writing 0 to EFLG register
+          MCP2515_WriteRegister(&hspi1, MCP2515_EFLG, 0x00);
+          // Also clear interrupt flags
+          MCP2515_WriteRegister(&hspi1, MCP2515_CANINTF, 0x00);
         }
     }
   }

@@ -260,33 +260,6 @@ void print_all_voltages_uart(const VoltageValues *values)
         int int_part = (int)values->cell[i];
         int dec_part = (int)(fabsf((values->cell[i] - int_part) * 1000.0f) + 0.5f);
         snprintf(msg, sizeof(msg), "[ADC]    CELL%d: %d.%03d V (raw=%d)\r\n", i+1, int_part, dec_part, values->cell_raw[i]);
-        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+        // UART debug dump removed; JSON telemetry provides these values
     }
-    
-    // Display pack total
-    int int_pack = (int)pack_total;
-    int dec_pack = (int)(fabsf((pack_total - int_pack) * 1000.0f) + 0.5f);
-    snprintf(msg, sizeof(msg), "[ADC]    Pack Total: %d.%03d V\r\n", int_pack, dec_pack);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-
-    int int_bat = (int)values->battery_voltage;
-    int dec_bat = (int)(fabsf((values->battery_voltage - int_bat) * 1000.0f) + 0.5f);
-    snprintf(msg, sizeof(msg), "[ADC]    Battery: %d.%03d V\r\n", int_bat, dec_bat);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    int int_buck = (int)values->buck_voltage;
-    int dec_buck = (int)(fabsf((values->buck_voltage - int_buck) * 1000.0f) + 0.5f);
-    snprintf(msg, sizeof(msg), "[ADC]    BUCK: %d.%03d V\r\n", int_buck, dec_buck);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    int int_curr = (int)values->current;
-    int dec_curr = (int)(fabsf(values->current - int_curr) * 1000.0f + 0.5f);
-    snprintf(msg, sizeof(msg), "[ADC]    Current: %d.%03d A (raw=%d)\r\n", int_curr, dec_curr, values->current_raw);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    int int_shunt = (int)values->shunt_voltage;
-    int dec_shunt = (int)(fabsf(values->shunt_voltage - int_shunt) * 1000.0f + 0.5f);
-    snprintf(msg, sizeof(msg), "[ADC]    Shunt: %d.%03d V\r\n", int_shunt, dec_shunt);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }

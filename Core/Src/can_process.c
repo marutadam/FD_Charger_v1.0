@@ -36,8 +36,6 @@ static inline void clear_response_data(CAN_Frame *frame) {
 
 void ProcessCanFrame(CAN_Frame *rxFrame)
 {
-    char uart_buffer[100];
-    
     // Validate DLC
     if (rxFrame->dlc == 0 || rxFrame->dlc > 8) {
         return;
@@ -46,13 +44,7 @@ void ProcessCanFrame(CAN_Frame *rxFrame)
     // Accept command messages on broadcast or device-specific ID
     if ((rxFrame->id == CAN_BROADCAST_ID || rxFrame->id == CAN_ID) && !rxFrame->extended) {
         CAN_COMMAND cmd = (CAN_COMMAND)rxFrame->data[0];
-        int len = snprintf(uart_buffer, sizeof(uart_buffer), "[0x%02X] | Data: ", rxFrame->data[0]);
-        for (uint8_t i = 1; i < rxFrame->dlc && i < 8 && len < (int)sizeof(uart_buffer) - 10; i++) {
-            len += snprintf(uart_buffer + len, sizeof(uart_buffer) - len, "%02X ", rxFrame->data[i]);
-        }
-        len += snprintf(uart_buffer + len, sizeof(uart_buffer) - len, "\r\n");
-        HAL_UART_Transmit(&huart1, (uint8_t*)uart_buffer, len, UART_TIMEOUT_MS);
-        // Example: handle commands using enum
+        // Command handling; UART debug removed (JSON telemetry used)
         CAN_Frame response;
         switch (cmd) {
             case CMD_START_CHARGING:
@@ -163,14 +155,7 @@ CAN_Frame SetEndVoltage(uint8_t voltage) {
     CAN_Frame response = CreateResponse(CMD_SET_END_VOLTAGE);
     float voltage_f = end_voltage * 10.0f;
     uint16_t voltage_uint = (uint16_t)voltage_f;
-    // Log the voltage (avoid float printf, use integer math)
-    uint16_t voltage_int = voltage_uint / 10;      // Integer part
-    uint16_t voltage_dec = voltage_uint % 10;      // Decimal part
-    char buffer[60];
-    int curr_len = snprintf(buffer, sizeof(buffer), "[INFO] Set Voltage: %u.%u V (raw=0x%02X)\r\n", 
-                            voltage_int, voltage_dec, voltage);
-
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, UART_TIMEOUT_MS);
+    // UART log removed (values reported via JSON)
 
     response.data[7] = (uint8_t)voltage_f;
     charger_set_targets(end_voltage, set_current);
@@ -183,14 +168,7 @@ CAN_Frame SetCurrent(uint8_t current) {
     CAN_Frame response = CreateResponse(CMD_SET_CURRENT);
     float current_f = set_current * 10.0f;
     uint16_t current_uint = (uint16_t)current_f;
-    // Log the current (avoid float printf, use integer math)
-    uint16_t current_int = current_uint / 10;      // Integer part
-    uint16_t current_dec = current_uint % 10;      // Decimal part
-    char buffer[60];
-    int curr_len = snprintf(buffer, sizeof(buffer), "[INFO] Set Current: %u.%u A (raw=0x%02X)\r\n", 
-                            current_int, current_dec, current);
-
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, curr_len, UART_TIMEOUT_MS);
+    // UART log removed (values reported via JSON)
 
     response.data[7] = (uint8_t)current_f; // Acknowledge
     charger_set_targets(end_voltage, set_current);
@@ -274,8 +252,6 @@ CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
         return response;
     }
     
-    char buffer[100];
-    int len = snprintf(buffer, sizeof(buffer), "[INFO] Balance Config: ");
     FlashParams cfg;
     cfg.enable_thresh = (float)rxFrame->data[2] / 1000.0f; // mV to V
     cfg.disable_thresh = (float)rxFrame->data[3] / 1000.0f; // mV to V
@@ -294,7 +270,7 @@ CAN_Frame ConfigBalance(CAN_Frame *rxFrame) {
     SaveAllParams(cfg);
     end_voltage_storage = cfg.storage_volt;
     
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, UART_TIMEOUT_MS);
+    // UART log removed (config acknowledged via CAN)
     // Here you would apply the configuration to your balancing controllers
     response.data[1] = 0x00; // Acknowledge
     return response;

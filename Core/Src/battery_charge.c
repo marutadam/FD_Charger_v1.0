@@ -41,8 +41,10 @@ typedef struct {
 } ChargerController;
 
 static ChargerController charger = {0};
+#if DEBUG_CHARGER_TASK
 static uint32_t pwm_log_last_tick = 0;
 static float pwm_log_last_duty = -1.0f;
+#endif
 
 static void charger_apply_pwm(float duty_counts);
 static void charger_log(const char *fmt, ...);
@@ -95,7 +97,7 @@ void charger_fault_clear_all(void) {
     charger_faults.temp_low = false;
     charger_faults.fan_error = false;
     charger_faults.unknown = false;
-    charger_log("[CHARGER] Fault flags cleared\r\n");
+    // log disabled
 }
 
 bool charger_fault_any(void) {
@@ -168,9 +170,7 @@ void charger_set_targets(float target_voltage, float target_current) {
 
     int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
     int current_centi = (int)lroundf(charger.target_current * 100.0f);
-    charger_log("[CHARGER] Targets set: %d.%02d V, %d.%02d A\r\n",
-                voltage_centi / 100, abs(voltage_centi % 100),
-                current_centi / 100, abs(current_centi % 100));
+    // log disabled
 }
 
 void charger_enable(void) {
@@ -188,10 +188,7 @@ void charger_enable(void) {
 
     int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
     int current_centi = (int)lroundf(charger.target_current * 100.0f);
-    charger_log("[CHARGER] Enabled: start duty %.0f (targets %d.%02d V, %d.%02d A)\r\n",
-                charger.duty,
-                voltage_centi / 100, abs(voltage_centi % 100),
-                current_centi / 100, abs(current_centi % 100));
+    // log disabled
 }
 
 void charger_disable(void) {
@@ -213,9 +210,9 @@ static void charger_disable_internal(const char *reason) {
     charger_apply_pwm(0.0f);
     if (was_enabled) {
         if (reason && reason[0] != '\0') {
-            charger_log("[CHARGER] Disabled (%s)\r\n", reason);
+            // log disabled
         } else {
-            charger_log("[CHARGER] Disabled\r\n");
+            // log disabled
         }
         charger_log_state_change(prev_state, charger.state, reason);
     }
@@ -277,7 +274,7 @@ void charger_update(const VoltageValues *meas) {
             cell_overvoltage_detected = 1;
             charger_faults.overvoltage = true;
             #ifdef DEBUG_BALANCE
-            charger_log("[PROTECT] Cell %d overvoltage: %.3f V (limit: %.1f V)\r\n", i+1, meas->cell[i], CELL_OVERVOLTAGE_LIMIT);
+            // log disabled
             #endif
             break;
         }
@@ -359,6 +356,7 @@ void charger_update(const VoltageValues *meas) {
     charger_apply_pwm(charger.duty);
     charger_log_state_change(prev_state, charger.state, state_change_reason);
 
+#if DEBUG_CHARGER_TASK
     // --- PWM Value Logging ---
     uint32_t now_tick = HAL_GetTick();
     // Log if the value has changed or if 1 second has passed
@@ -383,6 +381,7 @@ void charger_update(const VoltageValues *meas) {
             pwm_log_last_duty = charger.duty;
         }
     }
+#endif
 }
 
 ChargerState charger_get_state(void) {
@@ -400,11 +399,7 @@ void charger_enter_storage_mode(void) {
     {
         int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
         int current_centi = (int)lroundf(charger.target_current * 100.0f);
-        charger_log("[BAL] Enter storage: enabled=%u, state=%s, targets %d.%02d V, %d.%02d A\r\n",
-                    (unsigned)charger.enabled,
-                    charger_state_to_string(charger.state),
-                    voltage_centi / 100, abs(voltage_centi % 100),
-                    current_centi / 100, abs(current_centi % 100));
+            // log disabled
     }
     #endif
     ChargerState prev = charger.state;
@@ -451,19 +446,9 @@ static void charger_apply_pwm(float duty_counts) {
 
 }
 
+// Logging disabled (JSON telemetry supersedes UART prints)
 static void charger_log(const char *fmt, ...) {
-    char buffer[128];
-    va_list args;
-    va_start(args, fmt);
-    int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    if (len <= 0) {
-        return;
-    }
-    if (len > (int)sizeof(buffer)) {
-        len = sizeof(buffer);
-    }
-    HAL_UART_Transmit(&huart1, (uint8_t *)buffer, len, HAL_MAX_DELAY);
+    (void)fmt;
 }
 
 static const char *charger_state_to_string(ChargerState state) {
@@ -489,13 +474,7 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
     if (prev_state == new_state) {
         return;
     }
-    const char *from = charger_state_to_string(prev_state);
-    const char *to = charger_state_to_string(new_state);
-    if (reason && reason[0] != '\0') {
-        charger_log("[CHARGER] State %s -> %s (%s)\r\n", from, to, reason);
-    } else {
-        charger_log("[CHARGER] State %s -> %s\r\n", from, to);
-    }
+    (void)reason;
 }
 
 // Charging mode balance (lighter balancing to avoid disrupting charge current)
@@ -641,6 +620,6 @@ void CalculateFanRPM(int measurement_time_ms)
     charger_faults.fan_error = (fan_rpm < 1000U);
 
 #ifdef FAN_DEBUG
-    charger_log("[FAN] RPM: %lu (pulses: %lu)\r\n", (unsigned long)fan_rpm, (unsigned long)pulses);
+    // log disabled
 #endif
 }

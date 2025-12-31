@@ -215,17 +215,7 @@ uint32_t balance_get_last_pulse(uint8_t cell_index) {
 }
 
 void printBalanceDuty(void) {
-    extern UART_HandleTypeDef huart1;
-    extern volatile uint8_t can_balance_enabled;
-    char buffer[150];
-    const char* balance_status = can_balance_enabled ? "ON " : "OFF";
-    int len = snprintf(buffer, sizeof(buffer), 
-                       "[BALANCE] Status: %s | Duty[C1-C6]: %3u%% %3u%% %3u%% %3u%% %3u%% %3u%%\r\n",
-                       balance_status,
-                       balance_get_last_duty(0), balance_get_last_duty(1),
-                       balance_get_last_duty(2), balance_get_last_duty(3),
-                       balance_get_last_duty(4), balance_get_last_duty(5));
-    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, 100);
+    // Debug print disabled (values available in JSON telemetry)
 }
 
 void balance_cell(uint8_t cell_index, float *cell_voltages, float deadband) {
@@ -248,24 +238,7 @@ void balance_all_cells(float *cell_voltages, uint8_t num_cells, float deadband) 
         balance_controller_update(i, cell_voltages[i], reference);
     }
     
-    // Debug: show active balance duties (only when any duty > 0)
-    uint8_t any_active = 0;
-    for (uint8_t i = 0; i < num_cells; ++i) {
-        if (cell_last_duty[i] > 0) {
-            any_active = 1;
-            break;
-        }
-    }
-    if (any_active) {
-        extern volatile uint8_t can_balance_enabled;
-        char msg[140];
-        int len = snprintf(msg, sizeof(msg), "[BALANCE_ACTIVE] flag=%u PWM: %u%% %u%% %u%% %u%% %u%% %u%%\r\n",
-                          can_balance_enabled,
-                          cell_last_duty[0], cell_last_duty[1], cell_last_duty[2],
-                          cell_last_duty[3], cell_last_duty[4], cell_last_duty[5]);
-        extern UART_HandleTypeDef huart1;
-        HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, 50);
-    }
+    // Debug UART output removed; balance duties visible in JSON
 }
 
 void StartStorageMode() {
