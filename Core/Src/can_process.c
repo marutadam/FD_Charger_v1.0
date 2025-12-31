@@ -154,9 +154,6 @@ CAN_Frame SetEndVoltage(uint8_t voltage) {
 
     CAN_Frame response = CreateResponse(CMD_SET_END_VOLTAGE);
     float voltage_f = end_voltage * 10.0f;
-    uint16_t voltage_uint = (uint16_t)voltage_f;
-    // UART log removed (values reported via JSON)
-
     response.data[7] = (uint8_t)voltage_f;
     charger_set_targets(end_voltage, set_current);
     return response;
@@ -164,12 +161,8 @@ CAN_Frame SetEndVoltage(uint8_t voltage) {
 
 CAN_Frame SetCurrent(uint8_t current) {
     set_current = (float)current / 10.0f;
-
     CAN_Frame response = CreateResponse(CMD_SET_CURRENT);
     float current_f = set_current * 10.0f;
-    uint16_t current_uint = (uint16_t)current_f;
-    // UART log removed (values reported via JSON)
-
     response.data[7] = (uint8_t)current_f; // Acknowledge
     charger_set_targets(end_voltage, set_current);
     return response;
@@ -193,6 +186,14 @@ CAN_Frame IsBatteryPresent() {
 CAN_Frame ReadCurrentVoltage() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_VOLTAGE);
     VoltageValues voltages = get_battery_voltages_safe();  // Thread-safe read
+
+    // If battery absent, force zeros for pack and cells
+    if (!is_battery_present) {
+        voltages.battery_voltage = 0.0f;
+        for (int i = 0; i < 6; ++i) {
+            voltages.cell[i] = 0.0f;
+        }
+    }
     
     for (int i = 1; i < 7; i++) {
         float v = voltages.cell[i-1];
