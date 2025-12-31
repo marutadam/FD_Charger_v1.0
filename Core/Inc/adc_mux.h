@@ -83,4 +83,3 @@ static inline ADS1115_ChannelConfig get_ads1115_config(ADS1115_VoltageChannel ch
 }
 int16_t ads1115_read_voltage(I2C_HandleTypeDef *hi2c, uint8_t i2c_addr, uint8_t channel, ADS1115_PGA pga);
 VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c);
-void print_all_voltages_uart(const VoltageValues *values);

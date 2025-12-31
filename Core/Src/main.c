@@ -1156,8 +1156,7 @@ void CanTaskHandler(void *argument)
 {
   /* USER CODE BEGIN CanTaskHandler */
   CAN_Frame rxFrame;
-  char uart_buffer[100];
-  
+    
   // Send startup message
   const char* task_start = "[INIT] CAN Task started\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)task_start, strlen(task_start), HAL_MAX_DELAY);
@@ -1311,9 +1310,6 @@ void AdcTaskHandler(void *argument)
       fan_error_sent = 0;
     }
 
-    if (DEBUG_ADC_TASK) {
-      print_all_voltages_uart(&new_voltages);
-    }
     osDelay(50);
   }
   /* USER CODE END AdcTaskHandler */

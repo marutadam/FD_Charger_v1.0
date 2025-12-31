@@ -211,11 +211,6 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
         values.shunt_voltage = values.shunt_voltage * shunt_calibration_gain * shunt_divider_scale;
 
     values.buck_voltage = readBuck(hi2c);
-    // values.current = readCurrent(hi2c,
-    //                              values.battery_voltage,
-    //                              values.buck_voltage,
-    //                              battery_raw,
-    //                              &values.current_raw);
 
     values.current = calculateCurrent(values.shunt_voltage, values.battery_voltage);  
     for (int i = 0; i < 6; ++i) {
@@ -247,19 +242,3 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
     return filtered_voltages;
 }
 
-void print_all_voltages_uart(const VoltageValues *values)
-{
-    char msg[128];
-    snprintf(msg, sizeof(msg), "[ADC] Cell voltages (differential):\r\n");
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    // Calculate total pack voltage for verification
-    float pack_total = 0.0f;
-    for (int i = 0; i < 6; i++) {
-        pack_total += values->cell[i];
-        int int_part = (int)values->cell[i];
-        int dec_part = (int)(fabsf((values->cell[i] - int_part) * 1000.0f) + 0.5f);
-        snprintf(msg, sizeof(msg), "[ADC]    CELL%d: %d.%03d V (raw=%d)\r\n", i+1, int_part, dec_part, values->cell_raw[i]);
-        // UART debug dump removed; JSON telemetry provides these values
-    }
-}
