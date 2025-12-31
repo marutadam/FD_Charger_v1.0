@@ -117,8 +117,8 @@ volatile float end_voltage = 24.6f;
 volatile float end_voltage_storage = 20.2f; // default ~3.7V per cell for 6S
 volatile float set_current = 2.0f;
 volatile uint8_t system_state = 0x00; // 0x00 = System ok, 0x0X = error codes
-volatile uint16_t charged_mah = 12345;
-volatile uint16_t charging_power = 6572;
+volatile uint16_t charged_mah = 0;
+volatile uint16_t charging_power = 0;
 volatile uint8_t is_battery_present = 0;
 volatile bool is_battery_charging = false;
 
@@ -299,7 +299,7 @@ static void uart_send_status_json(void)
       "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%d.%03d,\"i\":%d.%03d,\"buck\":%d.%03d,\"battery\":%d.%03d,\"shunt\":%d.%03d},"
       "\"cells\":[%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d],"
       "\"balance\":{\"enabled\":%u,\"duties\":[%u,%u,%u,%u,%u,%u],\"pwm_raw\":[%lu,%lu,%lu,%lu,%lu,%lu]},"
-      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d,\"charged_mah\":%u}}\r\n",
+      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d,\"charged_mah\":%u,\"power_w\":%u}}\r\n",
       ts_ms,
       is_battery_present,
       pack_v_i, pack_v_f, curr_i, curr_f, buck_i, buck_f, batt_i, batt_f, shunt_i, shunt_f,
@@ -308,7 +308,7 @@ static void uart_send_status_json(void)
       duty[0], duty[1], duty[2], duty[3], duty[4], duty[5],
       pwm_raw[0], pwm_raw[1], pwm_raw[2], pwm_raw[3], pwm_raw[4], pwm_raw[5],
       charger_state_to_string_public(st),
-      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f, charged_mah);
+      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f, charged_mah, charging_power);
 
   if (len > 0 && len < (int)sizeof(json)) {
     (void)HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 200);
@@ -1205,6 +1205,8 @@ void ChargerTaskHandler(void *argument)
   /* USER CODE BEGIN ChargerTaskHandler */
   static uint8_t was_charging = 0;
   static float accumulated_mah = 0.0f;
+  static float filtered_power = 0.0f;
+  const float alpha = 0.2f;  // Low-pass filter coefficient (0.0 = no change, 1.0 = instant)
   
   /* Infinite loop */
   for(;;)
@@ -1215,6 +1217,8 @@ void ChargerTaskHandler(void *argument)
       if (!was_charging) {
         charged_mah = 0;
         accumulated_mah = 0.0f;
+        filtered_power = 0.0f;
+        charging_power = 0;
         was_charging = 1;
       }
       
@@ -1225,6 +1229,7 @@ void ChargerTaskHandler(void *argument)
       // Accumulate charged mAh: mAh = (current_A * time_ms / 3600.0)
       VoltageValues v = get_battery_voltages_safe();
       float current_a = v.current;
+      float voltage_v = v.battery_voltage;
       uint32_t period_ms = charger_get_update_period_ms();
       
       if (current_a > 0.0f) {
@@ -1232,6 +1237,11 @@ void ChargerTaskHandler(void *argument)
         accumulated_mah += mah_delta;
         charged_mah = (uint16_t)accumulated_mah;
       }
+      
+      // Calculate instantaneous power and apply exponential moving average filter
+      float instant_power = voltage_v * current_a;  // Watts
+      filtered_power = alpha * instant_power + (1.0f - alpha) * filtered_power;
+      charging_power = (uint16_t)filtered_power;  // Store as Watts
     }
     else
     {
@@ -1247,6 +1257,7 @@ void ChargerTaskHandler(void *argument)
       }
       charger_disable_with_reason(reason);
       was_charging = 0;  // Reset flag when not charging
+      charging_power = 0;  // Reset power when not charging
     }
 
     // This function checks fan speed and can set a fault flag.
