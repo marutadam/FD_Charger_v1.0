@@ -211,7 +211,17 @@ CAN_Frame ReadCurrentVoltage() {
 CAN_Frame ReadCurrentCurrent() {
     CAN_Frame response = CreateResponse(CMD_READ_CURRENT_CURRENT);
     clear_response_data(&response);
-    response.data[7] = (uint8_t)(charging_current * 10.0f);
+
+    // Use latest measured current from ADC (current_battery_voltages)
+    VoltageValues voltages = get_battery_voltages_safe();
+    float curr = voltages.current;
+    if (!is_battery_present) {
+        curr = 0.0f;
+    }
+    int scaled = (int)(curr * 10.0f); // 0.1 A resolution
+    if (scaled < 0) scaled = 0;
+    if (scaled > 255) scaled = 255;
+    response.data[7] = (uint8_t)scaled;
     return response;
 }
 
