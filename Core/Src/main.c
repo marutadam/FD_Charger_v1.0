@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "can_process.h"
 #include "param_types.h"
 #include <stdlib.h>
@@ -69,7 +70,7 @@ volatile uint8_t can_balance_enabled = 0;
 osThreadId_t uartTaskHandle;
 const osThreadAttr_t uartTask_attributes = {
   .name = "uartTask",
-  .stack_size = 256 * 4,  // Reduced from 512*4 - UART parsing is lightweight
+  .stack_size = 512 * 4,  // 2KB for JSON telemetry buffer (~600 bytes)
   .priority = (osPriority_t) osPriorityBelowNormal,  // Non-critical, can be preempted
 };
 /* Definitions for canTask */
@@ -129,7 +130,15 @@ volatile uint32_t fan_int_count = 0;
 volatile uint32_t fan_rpm = 0;
 
 volatile uint8_t rxByte;
-VoltageValues current_battery_voltages;
+VoltageValues current_battery_voltages = {
+  .cell = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+  .cell_raw = {0, 0, 0, 0, 0, 0},
+  .battery_voltage = 0.0f,
+  .shunt_voltage = 0.0f,
+  .buck_voltage = 0.0f,
+  .current = 0.0f,
+  .current_raw = 0
+};
 #define CMD_MAX_LEN 64
 
  void uart_send_frame(const char *prefix, CAN_Frame *frame)
@@ -199,12 +208,38 @@ static const char *charger_state_to_string_public(ChargerState state)
   }
 }
 
+static inline float safe_float(float val) {
+  // Simple: if exponent bits are all 1s (NaN/inf), return 0
+  // Otherwise return value as-is (even if garbage - will show in JSON)
+  union { float f; uint32_t u; } conv;
+  conv.f = val;
+  uint32_t exp = (conv.u >> 23) & 0xFF;
+  if (exp == 0xFF || exp == 0) {
+    return 0.0f;  // NaN, inf, or denormal
+  }
+  return val;
+}
+
 static void uart_send_status_json(void)
 {
+  static uint32_t call_counter = 0;
+  call_counter++;
+
   VoltageValues v = get_battery_voltages_safe();
+  
   float pack_v = 0.0f;
   for (uint8_t i = 0; i < 6; ++i) {
-    pack_v += v.cell[i];
+    pack_v += safe_float(v.cell[i]);
+  }
+
+  // If battery absent, zero out pack and cell readings
+  if (!is_battery_present) {
+    pack_v = 0.0f;
+    v.battery_voltage = 0.0f;
+    v.shunt_voltage = 0.0f;
+    for (uint8_t i = 0; i < 6; ++i) {
+      v.cell[i] = 0.0f;
+    }
   }
 
   uint32_t ts_ms = HAL_GetTick();
@@ -217,36 +252,67 @@ static void uart_send_status_json(void)
   }
 
   ChargerState st = charger_get_state();
-  float pwm = charger_get_pwm_duty();
-  float pwm_counts = charger_get_pwm_counts_raw();
-  float pwm_counts_max = charger_get_pwm_counts_max();
+  
+  float pwm = safe_float(charger_get_pwm_duty());
+  float pwm_counts = safe_float(charger_get_pwm_counts_raw());
+  float pwm_counts_max = safe_float(charger_get_pwm_counts_max());
 
-  char json[512];
+  // Convert floats to int.frac manually (snprintf doesn't support %f without -u _printf_float)
+  // Use abs() for fractional part to handle negative values
+  
+  float pack_val = pack_v;
+  int pack_v_i = (int)pack_val;
+  int pack_v_f = (int)(fabsf(pack_val - pack_v_i) * 1000.0f);
+  
+  float curr_val = safe_float(v.current);
+  int curr_i = (int)curr_val;
+  int curr_f = (int)(fabsf(curr_val - curr_i) * 1000.0f);
+  
+  float buck_val = safe_float(v.buck_voltage);
+  int buck_i = (int)buck_val;
+  int buck_f = (int)(fabsf(buck_val - buck_i) * 1000.0f);
+  
+  float batt_val = safe_float(v.battery_voltage);
+  int batt_i = (int)batt_val;
+  int batt_f = (int)(fabsf(batt_val - batt_i) * 1000.0f);
+  
+  float shunt_val = safe_float(v.shunt_voltage);
+  int shunt_i = (int)shunt_val;
+  int shunt_f = (int)(fabsf(shunt_val - shunt_i) * 1000.0f);
+  
+  float c0_val = safe_float(v.cell[0]); int c0_i = (int)c0_val; int c0_f = (int)(fabsf(c0_val - c0_i) * 1000.0f);
+  float c1_val = safe_float(v.cell[1]); int c1_i = (int)c1_val; int c1_f = (int)(fabsf(c1_val - c1_i) * 1000.0f);
+  float c2_val = safe_float(v.cell[2]); int c2_i = (int)c2_val; int c2_f = (int)(fabsf(c2_val - c2_i) * 1000.0f);
+  float c3_val = safe_float(v.cell[3]); int c3_i = (int)c3_val; int c3_f = (int)(fabsf(c3_val - c3_i) * 1000.0f);
+  float c4_val = safe_float(v.cell[4]); int c4_i = (int)c4_val; int c4_f = (int)(fabsf(c4_val - c4_i) * 1000.0f);
+  float c5_val = safe_float(v.cell[5]); int c5_i = (int)c5_val; int c5_f = (int)(fabsf(c5_val - c5_i) * 1000.0f);
+  
+  int pwm_i = (int)pwm; int pwm_f = (int)(fabsf(pwm - pwm_i) * 100.0f);
+  int pwm_cnt = (int)pwm_counts; int pwm_max = (int)pwm_counts_max;
+  
+  float tgt_v_val = safe_float(end_voltage); int tgt_v_i = (int)tgt_v_val; int tgt_v_f = (int)(fabsf(tgt_v_val - tgt_v_i) * 100.0f);
+  float tgt_i_val = safe_float(set_current); int tgt_i_i = (int)tgt_i_val; int tgt_i_f = (int)(fabsf(tgt_i_val - tgt_i_i) * 100.0f);
+
+    char json[600];
   int len = snprintf(
       json,
       sizeof(json),
-      "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%.3f,\"i\":%.3f,\"buck\":%.3f},"
-      "\"cells\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],"
+      "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%d.%03d,\"i\":%d.%03d,\"buck\":%d.%03d,\"battery\":%d.%03d,\"shunt\":%d.%03d},"
+      "\"cells\":[%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d],"
       "\"balance\":{\"enabled\":%u,\"duties\":[%u,%u,%u,%u,%u,%u],\"pwm_raw\":[%lu,%lu,%lu,%lu,%lu,%lu]},"
-      "\"charger\":{\"state\":\"%s\",\"pwm\":%.2f,\"pwm_raw\":%.0f,\"pwm_max\":%.0f,\"target_v\":%.2f,\"target_i\":%.2f}}\r\n",
+      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d}}\r\n",
       ts_ms,
       is_battery_present,
-      pack_v,
-      v.current,
-      v.buck_voltage,
-      v.cell[0], v.cell[1], v.cell[2], v.cell[3], v.cell[4], v.cell[5],
+      pack_v_i, pack_v_f, curr_i, curr_f, buck_i, buck_f, batt_i, batt_f, shunt_i, shunt_f,
+      c0_i, c0_f, c1_i, c1_f, c2_i, c2_f, c3_i, c3_f, c4_i, c4_f, c5_i, c5_f,
       can_balance_enabled,
       duty[0], duty[1], duty[2], duty[3], duty[4], duty[5],
       pwm_raw[0], pwm_raw[1], pwm_raw[2], pwm_raw[3], pwm_raw[4], pwm_raw[5],
       charger_state_to_string_public(st),
-      pwm,
-      pwm_counts,
-      pwm_counts_max,
-      end_voltage,
-      set_current);
+      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f);
 
   if (len > 0 && len < (int)sizeof(json)) {
-    HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 50);
+    (void)HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 200);
   }
 }
 #else
@@ -830,7 +896,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 921600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -1009,9 +1075,13 @@ void UartTask(void *argument)
     uint8_t last_was_eol = 0;
   uint32_t last_status_tick = HAL_GetTick();
 
-    if (DEBUG_UART_TASK) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] UART Task started\r\n", 26, HAL_MAX_DELAY);
-}
+  // Always announce UART task startup
+  HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] UART Task started\r\n", 26, 100);
+#if DEBUG_TELEMETRY
+  HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] Telemetry enabled (500ms)\r\n", 34, 100);
+#else
+  HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] Telemetry disabled\r\n", 27, 100);
+#endif
 for (;;) {
   // Use shorter timeout to allow periodic status JSON
   if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 50) == osOK) {
@@ -1055,16 +1125,22 @@ for (;;) {
             last_was_eol = 0;
         }
     }
-
-      uint32_t now = HAL_GetTick();
-    #if DEBUG_TELEMETRY
-      if ((now - last_status_tick) >= 500U) {
-        uart_send_status_json();
-        last_status_tick = now;
-      }
-    #endif
-    // No longer blocking here - allows other tasks to run
-}
+    
+    // Moved outside queue check - always runs even if no RX data
+    uint32_t now = HAL_GetTick();
+#if DEBUG_TELEMETRY
+    static uint32_t loop_counter = 0;
+    loop_counter++;
+    
+    if ((now - last_status_tick) >= 200U) {
+      uart_send_status_json();
+      last_status_tick = now;
+    }
+#endif
+    
+    // Yield to other tasks to prevent starvation
+    osDelay(1);
+  }
 
   /* USER CODE END 5 */
 }
@@ -1190,7 +1266,7 @@ void AdcTaskHandler(void *argument)
   HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] AdcTaskHandler started\r\n", 30, HAL_MAX_DELAY);
   for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
     if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
-      int len = snprintf(msg, sizeof(msg), "[ADC] I2C device found at 0x%02X\r\n", addr);
+      int len = snprintf(msg, sizeof(msg), "[ADC] ADS1115 device found at 0x%02X\r\n", addr);
       HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
       if (addr == 0x48) {
         found = 1;
@@ -1198,9 +1274,7 @@ void AdcTaskHandler(void *argument)
     }
     osDelay(2);
   }
-  if (found) {
-    snprintf(msg, sizeof(msg), "[INIT][ADC] ADS1115 detected at 0x48!\r\n");
-  } else {
+  if (!found) {
     snprintf(msg, sizeof(msg), "[ERROR] ADS1115 NOT detected!\r\n");
   }
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
