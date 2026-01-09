@@ -38,6 +38,7 @@ typedef struct {
     PI_Controller voltage_pi;
     uint32_t last_tick;
     uint32_t termination_timer;
+    uint8_t fast_mode;  // 1 = fast loop (50ms), 0 = slow loop (300ms)
 } ChargerController;
 
 static ChargerController charger = {0};
@@ -167,10 +168,6 @@ void charger_set_targets(float target_voltage, float target_current) {
     charger.target_current = target_current;
     charger.current_pi.integral = 0.0f;
     charger.voltage_pi.integral = 0.0f;
-
-    int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
-    int current_centi = (int)lroundf(charger.target_current * 100.0f);
-    // log disabled
 }
 
 void charger_enable(void) {
@@ -179,16 +176,13 @@ void charger_enable(void) {
     }
     charger.enabled = 1;
     charger.state = CHARGER_STATE_CC;
-    charger.duty = charger.duty_min_counts;
+    charger.duty = 250.0f;  // Start from 250 counts for faster initial ramp
+        charger.fast_mode = 1;  // Start in fast mode for quick ramp-up
     charger.current_pi.integral = 0.0f;
     charger.voltage_pi.integral = 0.0f;
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
     charger_apply_pwm(charger.duty);
-
-    int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
-    int current_centi = (int)lroundf(charger.target_current * 100.0f);
-    // log disabled
 }
 
 void charger_disable(void) {
@@ -285,14 +279,28 @@ void charger_update(const VoltageValues *meas) {
             // Drive based on how far buck voltage is above the battery.
             {
                 float voltage_gap = meas->buck_voltage - meas->battery_voltage;
-                float step = RAMP_UP_STEP;
-                if (voltage_gap <= VOLTAGE_SLOW_GAP) {
-                    step = DUTY_STEP; // almost equal -> crawl
-                } else if (voltage_gap <= VOLTAGE_MED_GAP) {
-                    step = 5.0f * DUTY_STEP; // moderate gap -> medium ramp
+                float step = DUTY_STEP;  // Default to slow step
+                
+                // Use progressively larger steps for larger voltage gaps
+                if (voltage_gap > VOLTAGE_MED_GAP) {
+                    step = RAMP_UP_STEP;  // Large gap -> fast ramp (40.0f)
+                } else if (voltage_gap > VOLTAGE_SLOW_GAP) {
+                    step = 5.0f * DUTY_STEP;  // Medium gap -> medium ramp (5.0f)
                 }
+                // else: small gap (<= 0.25V) -> use DUTY_STEP (1.0f)
+                
                 if (charger.duty >= 320.0f && step > DUTY_STEP) {
                     step = DUTY_STEP; // beyond threshold only fine adjustments
+                
+                                // Dynamic loop period switching
+                                // Use fast 50ms loop during initial ramp-up (current far from target)
+                                // Switch to slow 300ms loop once we're close to target current
+                                float current_error = fabsf(meas->current - charger.target_current);
+                                if (charger.fast_mode && current_error < 0.6f) {
+                                    // One-way: exit fast mode after initial convergence
+                                    charger.fast_mode = 0;
+                                }
+                
                 }
                 if(meas->current < charger.target_current-0.2f) {
                 charger.duty += step;
@@ -313,11 +321,11 @@ void charger_update(const VoltageValues *meas) {
             // In CV mode, adjust PWM to meet target_voltage
             if (meas->battery_voltage < charger.target_voltage) {
                 charger.duty += DUTY_STEP;
-            } else {
+            } else if (meas->battery_voltage > charger.target_voltage+0.2f) {
                 charger.duty -= DUTY_STEP;
             }
             // Additionally, ensure we don't exceed the target current as a safety measure
-            if (meas->current > charger.target_current) {
+            if (meas->current > charger.target_current+0.4f) {
                             // Reduce duty if any cell overvoltage detected
                             if (cell_overvoltage_detected) {
                                 charger.duty -= DUTY_STEP;  // Softer reduction to avoid oscillation
@@ -395,13 +403,6 @@ void charger_enter_storage_mode(void) {
     if (!charger.enabled) {
         charger_enable();
     }
-    #ifdef DEBUG_BALANCE
-    {
-        int voltage_centi = (int)lroundf(charger.target_voltage * 100.0f);
-        int current_centi = (int)lroundf(charger.target_current * 100.0f);
-            // log disabled
-    }
-    #endif
     ChargerState prev = charger.state;
     charger.state = CHARGER_STATE_STORAGE;
     charger_log_state_change(prev, charger.state, "enter storage mode");
@@ -423,7 +424,8 @@ float charger_get_pwm_counts_max(void) {
 }
 
 uint16_t charger_get_update_period_ms(void) {
-    return charger.cfg.update_period_ms;
+    // Return 100ms in fast mode, configured period (300ms) in slow mode
+    return charger.fast_mode ? 100 : charger.cfg.update_period_ms;
 }
 
 static void charger_apply_pwm(float duty_counts) {
@@ -447,11 +449,11 @@ static void charger_apply_pwm(float duty_counts) {
 }
 
 // Logging disabled (JSON telemetry supersedes UART prints)
-static void charger_log(const char *fmt, ...) {
+static void __attribute__((unused)) charger_log(const char *fmt, ...) {
     (void)fmt;
 }
 
-static const char *charger_state_to_string(ChargerState state) {
+static const char *__attribute__((unused)) charger_state_to_string(ChargerState state) {
     switch (state) {
         case CHARGER_STATE_IDLE:
             return "IDLE";
@@ -523,7 +525,7 @@ static uint8_t storage_compute_duty(float delta_v) {
     return duty_u8;
 }
 
-static void charger_charging_balance_update(const VoltageValues *meas) {
+static void __attribute__((unused)) charger_charging_balance_update(const VoltageValues *meas) {
     if (meas == NULL) {
         balance_disable_all_cells();
         return;
@@ -611,12 +613,25 @@ static void charger_storage_update(const VoltageValues *meas) {
 
 void CalculateFanRPM(int measurement_time_ms)
 {
+    (void)measurement_time_ms;  // Unused - we measure actual elapsed time
     static uint32_t last_fan_int_count = 0;
+    static uint32_t last_measurement_tick = 0;
+    
+    uint32_t now = HAL_GetTick();
     uint32_t pulses = fan_int_count - last_fan_int_count;
     last_fan_int_count = fan_int_count;
-
-    // If called every 1 second:
-    fan_rpm = (pulses / FAN_PULSES_PER_REV) * 60000 / measurement_time_ms; // measurement_time in ms
+    
+    // Calculate actual elapsed time since last measurement
+    uint32_t elapsed_ms = (last_measurement_tick == 0) ? 100 : (now - last_measurement_tick);
+    last_measurement_tick = now;
+    
+    // Avoid division by zero
+    if (elapsed_ms == 0) {
+        elapsed_ms = 1;
+    }
+    
+    // RPM = (pulses / pulses_per_rev) * (60000 ms/min / elapsed_ms)
+    fan_rpm = (pulses * 60000) / (FAN_PULSES_PER_REV * elapsed_ms);
     charger_faults.fan_error = (fan_rpm < 1000U);
 
 #ifdef FAN_DEBUG

@@ -356,17 +356,19 @@ CAN_Frame SetCellBalance(uint8_t cell_num, uint8_t duty_percent) {
 CAN_Frame ManualBalanceCtrl(uint8_t enable) {
     CAN_Frame response = CreateResponse(CMD_MANUAL_BALANCE_CTRL);
     clear_response_data(&response);
-    
+    extern volatile uint8_t manual_balance_mode;
+
     if (enable == 0x01) {
-        // Enable manual mode - disable all cells
-        balance_disable_all_cells();
-        response.data[7] = 0x01; // Success
+        manual_balance_mode = 1;      // Allow SetCellBalance to hold duty
+        balance_disable_all_cells();  // Start from known-off state
+        response.data[7] = 0x01;      // Success
     } else if (enable == 0x00) {
-        // Disable manual mode - disable all cells
-        balance_disable_all_cells();
-        response.data[7] = 0x01; // Success
+        manual_balance_mode = 0;
+        balance_disable_all_cells();  // Turn everything off when leaving manual
+        response.data[7] = 0x00;
+              // Success
     } else {
-        response.data[7] = 0xFF; // Invalid parameter
+        response.data[7] = 0xFF;      // Invalid parameter
     }
     
     return response;

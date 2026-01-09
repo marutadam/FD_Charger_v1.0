@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include "battery_charge.h"
 #include "battery_balance.h"
+#include "ws2812c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -121,6 +122,7 @@ volatile uint16_t charged_mah = 0;
 volatile uint16_t charging_power = 0;
 volatile uint8_t is_battery_present = 0;
 volatile bool is_battery_charging = false;
+volatile uint8_t manual_balance_mode = 0;  // 1 = manual PWM via CAN, skip auto logic
 
 
 volatile ChargerFaultStatus charger_faults = {0};
@@ -299,7 +301,8 @@ static void uart_send_status_json(void)
       "{\"ts_ms\":%lu,\"pack\":{\"present\":%u,\"v\":%d.%03d,\"i\":%d.%03d,\"buck\":%d.%03d,\"battery\":%d.%03d,\"shunt\":%d.%03d},"
       "\"cells\":[%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d,%d.%03d],"
       "\"balance\":{\"enabled\":%u,\"duties\":[%u,%u,%u,%u,%u,%u],\"pwm_raw\":[%lu,%lu,%lu,%lu,%lu,%lu]},"
-      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d,\"charged_mah\":%u,\"power_w\":%u}}\r\n",
+      "\"charger\":{\"state\":\"%s\",\"pwm\":%d.%02d,\"pwm_raw\":%d,\"pwm_max\":%d,\"target_v\":%d.%02d,\"target_i\":%d.%02d,\"charged_mah\":%u,\"power_w\":%u},"
+      "\"fan\":{\"rpm\":%lu,\"status\":\"%s\"}}\r\n",
       ts_ms,
       is_battery_present,
       pack_v_i, pack_v_f, curr_i, curr_f, buck_i, buck_f, batt_i, batt_f, shunt_i, shunt_f,
@@ -308,7 +311,8 @@ static void uart_send_status_json(void)
       duty[0], duty[1], duty[2], duty[3], duty[4], duty[5],
       pwm_raw[0], pwm_raw[1], pwm_raw[2], pwm_raw[3], pwm_raw[4], pwm_raw[5],
       charger_state_to_string_public(st),
-      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f, charged_mah, charging_power);
+      pwm_i, pwm_f, pwm_cnt, pwm_max, tgt_v_i, tgt_v_f, tgt_i_i, tgt_i_f, charged_mah, charging_power,
+      fan_rpm, charger_faults.fan_error ? "FAULT" : "OK");
 
   if (len > 0 && len < (int)sizeof(json)) {
     (void)HAL_UART_Transmit(&huart1, (uint8_t *)json, (uint16_t)len, 200);
@@ -389,6 +393,9 @@ int main(void)
   // Disable all balancer PWM channels on startup
   balance_disable_all_cells();
 
+  // WS2812 LEDs completely disabled - pin set to ANALOG in MX_GPIO_Init
+  // HAL_GPIO_WritePin(LED_WS2812C_GPIO_Port, LED_WS2812C_Pin, GPIO_PIN_RESET);
+
   ChargerControllerCfg charger_cfg = {
     // PI gains tuned down to prevent oscillation and overshoot.
     // Kp provides primary response, Ki corrects for steady-state error.
@@ -403,7 +410,7 @@ int main(void)
     .termination_current = 0.5f,
     .termination_hold_ms = 5000,
     .cell_overvoltage_limit = 4.25f,
-    .update_period_ms = 100
+    .update_period_ms = 500
   };
   charger_controller_init(charger_cfg);
   charger_set_targets(end_voltage, set_current);
@@ -412,7 +419,6 @@ int main(void)
   HAL_UART_Receive_IT(&huart1, (uint8_t *)&rxByte, 1);
 
   // Read CAN ID from flash on startup
-  //CAN_ID = Flash_Read_CAN_ID();
   CAN_ID = ParamStore_Read_CAN_ID();
   FlashParams startup_params = ReadAllParams();
   if (startup_params.storage_volt > 0.0f) {
@@ -931,7 +937,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, BUILTIN_LED_Pin|LED_WS2812C_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, BUILTIN_LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, SPI_CS_Pin|LED_DATA_Pin, GPIO_PIN_RESET);
@@ -939,11 +945,17 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, A_Pin|B_Pin|C_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : BUILTIN_LED_Pin LED_WS2812C_Pin */
-  GPIO_InitStruct.Pin = BUILTIN_LED_Pin|LED_WS2812C_Pin;
+  /*Configure GPIO pin : BUILTIN_LED_Pin */
+  GPIO_InitStruct.Pin = BUILTIN_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED_WS2812C_Pin - DISABLED, set as analog to prevent driving LEDs */
+  GPIO_InitStruct.Pin = LED_WS2812C_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CAN_PROG_BTN_Pin */
@@ -1373,6 +1385,12 @@ void BalanceTaskHandler(void *argument)
   /* Infinite loop */
   for(;;)
   {
+    // In manual mode we leave CAN-set PWM values untouched
+    if (manual_balance_mode) {
+      osDelay(balance_period_ms);
+      continue;
+    }
+
     VoltageValues snapshot = get_battery_voltages_safe();  // Thread-safe read with mutex
     bool can_balance = can_balance_enabled;  // Use global enable flag
 

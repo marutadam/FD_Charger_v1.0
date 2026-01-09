@@ -5,8 +5,8 @@
 // Exponential Moving Average (EMA) filter for smoother voltage measurements
 // Lower alpha = more smoothing (more stable but slower response)
 // Higher alpha = less smoothing (faster response but noisier)
-#define VOLTAGE_FILTER_ALPHA 0.05f  // 0.0 - 1.0
-#define CURRENT_FILTER_ALPHA 0.15f // Smoother filter for current
+#define VOLTAGE_FILTER_ALPHA 0.1f  // 0.0 - 1.0
+#define CURRENT_FILTER_ALPHA 0.35f // Smoother filter for current
 
 // Filtered measurement values buffer
 static VoltageValues filtered_voltages = {0};
