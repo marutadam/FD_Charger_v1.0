@@ -60,7 +60,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/sysmem.c
     Core/Src/syscalls.c
     Core/Src/flash_param_store.c
-    Core/Src/ws2812c.c
     Core/Src/adc_mux.c
 )
 
