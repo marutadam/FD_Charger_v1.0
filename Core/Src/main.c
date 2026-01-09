@@ -407,7 +407,8 @@ int main(void)
     .termination_current = 0.5f,
     .termination_hold_ms = 5000,
     .cell_overvoltage_limit = 4.25f,
-    .update_period_ms = 500
+    .update_period_ms = 100,
+    .control_mode = CHARGER_CTRL_HYSTERESIS
   };
   charger_controller_init(charger_cfg);
   charger_set_targets(end_voltage, set_current);
