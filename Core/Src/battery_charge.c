@@ -39,21 +39,15 @@ typedef struct {
     uint32_t last_tick;
     uint32_t termination_timer;
     uint8_t fast_mode;  // 1 = fast loop (50ms), 0 = slow loop (300ms)
+    float filtered_current;  // EMA filtered current for smooth control
 } ChargerController;
 
 static ChargerController charger = {0};
-#if DEBUG_CHARGER_TASK
-static uint32_t pwm_log_last_tick = 0;
-static float pwm_log_last_duty = -1.0f;
-#endif
 
 static void charger_apply_pwm(float duty_counts);
-static void charger_log(const char *fmt, ...);
-static const char *charger_state_to_string(ChargerState state);
 static void charger_log_state_change(ChargerState prev_state, ChargerState new_state, const char *reason);
 static void charger_disable_internal(const char *reason);
 static void charger_storage_update(const VoltageValues *meas);
-static void charger_charging_balance_update(const VoltageValues *meas);
 
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max) {
     controller->kp = kp;
@@ -62,30 +56,6 @@ void pi_controller_init(PI_Controller *controller, float kp, float ki, float int
     controller->integral = 0.0f;
     controller->output_min = output_min;
     controller->output_max = output_max;
-}
-
-float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt) {
-    float error = setpoint - measurement;
-    
-    // Integral term with anti-windup
-    controller->integral += error * dt;
-    if (controller->integral > controller->integral_limit) {
-        controller->integral = controller->integral_limit;
-    } else if (controller->integral < -controller->integral_limit) {
-        controller->integral = -controller->integral_limit;
-    }
-    
-    // PI controller output
-    float output = (controller->kp * error) + (controller->ki * controller->integral);
-    
-    // Clamp output
-    if (output > controller->output_max) {
-        output = controller->output_max;
-    } else if (output < controller->output_min) {
-        output = controller->output_min;
-    }
-    
-    return output;
 }
 
 void charger_fault_clear_all(void) {
@@ -99,18 +69,6 @@ void charger_fault_clear_all(void) {
     charger_faults.fan_error = false;
     charger_faults.unknown = false;
     // log disabled
-}
-
-bool charger_fault_any(void) {
-    return charger_faults.overvoltage ||
-           charger_faults.overcurrent ||
-           charger_faults.timeout ||
-           charger_faults.cell_imbalance ||
-           charger_faults.battery_not_present ||
-           charger_faults.temp_high ||
-           charger_faults.temp_low ||
-           charger_faults.fan_error ||
-           charger_faults.unknown;
 }
 
 void charger_controller_init(ChargerControllerCfg cfg) {
@@ -178,15 +136,12 @@ void charger_enable(void) {
     charger.state = CHARGER_STATE_CC;
     charger.duty = 250.0f;  // Start from 250 counts for faster initial ramp
         charger.fast_mode = 1;  // Start in fast mode for quick ramp-up
+        charger.filtered_current = 0.0f;  // Reset filtered current
     charger.current_pi.integral = 0.0f;
     charger.voltage_pi.integral = 0.0f;
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
     charger_apply_pwm(charger.duty);
-}
-
-void charger_disable(void) {
-    charger_disable_internal(NULL);
 }
 
 void charger_disable_with_reason(const char *reason) {
@@ -255,10 +210,16 @@ void charger_update(const VoltageValues *meas) {
     }
 
     // --- VERY SIMPLE HYSTERESIS CONTROL ---
-    const float DUTY_STEP = 1.0f;        // Standard step for fine adjustments
+    const float DUTY_STEP = 0.25f;       // Very small steps for ultra-smooth control
     const float RAMP_UP_STEP = 40.0f;    // Large step for initial fast ramp-up
     const float VOLTAGE_SLOW_GAP = 0.25f; // Slow ramp when buck almost equals battery
     const float VOLTAGE_MED_GAP  = 1.0f;  // Medium ramp threshold
+    
+    // Exponential moving average filter for current (reduce measurement noise)
+    const float CURRENT_FILTER_ALPHA = 0.3f;  // 0.3 = heavy filtering
+    charger.filtered_current = CURRENT_FILTER_ALPHA * meas->current + 
+                               (1.0f - CURRENT_FILTER_ALPHA) * charger.filtered_current;
+    float current = charger.filtered_current;  // Use filtered value for control
 
     // --- CELL OVERVOLTAGE PROTECTION ---
     // Check if any cell exceeds safe charging voltage and reduce current
@@ -280,32 +241,38 @@ void charger_update(const VoltageValues *meas) {
             {
                 float voltage_gap = meas->buck_voltage - meas->battery_voltage;
                 float step = DUTY_STEP;  // Default to slow step
-                
-                // Use progressively larger steps for larger voltage gaps
+
+                // Base step from voltage gap to avoid buck saturation
                 if (voltage_gap > VOLTAGE_MED_GAP) {
                     step = RAMP_UP_STEP;  // Large gap -> fast ramp (40.0f)
                 } else if (voltage_gap > VOLTAGE_SLOW_GAP) {
                     step = 5.0f * DUTY_STEP;  // Medium gap -> medium ramp (5.0f)
                 }
-                // else: small gap (<= 0.25V) -> use DUTY_STEP (1.0f)
-                
-                if (charger.duty >= 320.0f && step > DUTY_STEP) {
-                    step = DUTY_STEP; // beyond threshold only fine adjustments
-                
-                                // Dynamic loop period switching
-                                // Use fast 50ms loop during initial ramp-up (current far from target)
-                                // Switch to slow 300ms loop once we're close to target current
-                                float current_error = fabsf(meas->current - charger.target_current);
-                                if (charger.fast_mode && current_error < 0.6f) {
-                                    // One-way: exit fast mode after initial convergence
-                                    charger.fast_mode = 0;
-                                }
-                
+                // else: small gap (<= 0.25V) -> use DUTY_STEP (0.25f)
+
+                // Scale step up when far from target current (faster approach),
+                // keep fine steps only when close to target
+                float current_error_abs = fabsf(charger.target_current - current);
+                float step_scale = 1.0f;
+                if (current_error_abs > 1.5f) {
+                    step_scale = 4.0f;   // very far -> much faster
+                } else if (current_error_abs > 0.8f) {
+                    step_scale = 2.0f;   // far -> faster
+                } else if (current_error_abs < 0.5f && step > DUTY_STEP) {
+                    step = DUTY_STEP;    // near target -> fine adjustments only
                 }
-                if(meas->current < charger.target_current-0.2f) {
+                step *= step_scale;
+
+                // One-way: exit fast mode after initial convergence
+                float current_error = fabsf(meas->current - charger.target_current);
+                if (charger.fast_mode && current_error < 0.5f) {
+                    charger.fast_mode = 0;
+                }
+                // Use wider hysteresis to reduce oscillations (±0.8A deadband)
+                if(current < charger.target_current - 0.8f) {
                 charger.duty += step;
                 }
-                if(meas->current > charger.target_current+0.4f) {
+                if(current > charger.target_current + 0.8f) {
                     charger.duty -= DUTY_STEP;
                                 // Reduce duty if any cell overvoltage detected
                                 if (cell_overvoltage_detected) {
@@ -313,8 +280,6 @@ void charger_update(const VoltageValues *meas) {
                                 }
                 }
             }
-            // Balance cells during CC charging
-            // charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_CV:
@@ -332,8 +297,6 @@ void charger_update(const VoltageValues *meas) {
                             }
                 charger.duty -= DUTY_STEP;
             }
-            // Balance cells during CV charging
-            // charger_charging_balance_update(meas);
             break;
 
         case CHARGER_STATE_COMPLETE:
@@ -364,32 +327,6 @@ void charger_update(const VoltageValues *meas) {
     charger_apply_pwm(charger.duty);
     charger_log_state_change(prev_state, charger.state, state_change_reason);
 
-#if DEBUG_CHARGER_TASK
-    // --- PWM Value Logging ---
-    uint32_t now_tick = HAL_GetTick();
-    // Log if the value has changed or if 1 second has passed
-    if (fabsf(charger.duty - pwm_log_last_duty) >= 1.0f || (now_tick - pwm_log_last_tick) >= 1000) {
-        if (charger.pwm_counts_max > 0.0f) {
-            uint32_t duty_counts_int = (uint32_t)lroundf(charger.duty);
-            
-            // Calculate percentage using integer math to avoid float printing issues
-            uint32_t percent_times_100 = (uint32_t)((charger.duty / charger.pwm_counts_max) * 10000.0f);
-            uint32_t percent_int = percent_times_100 / 100;
-            uint32_t percent_frac = percent_times_100 % 100;
-
-
-            charger_log("[CHARGER] Mode: %s | PWM Duty: %lu/%lu (%lu.%02lu%%)\r\n",
-                        charger_state_to_string(charger.state),
-                        (unsigned long)duty_counts_int,
-                        (unsigned long)lroundf(charger.pwm_counts_max),
-                        (unsigned long)percent_int,
-                        (unsigned long)percent_frac);
-
-            pwm_log_last_tick = now_tick;
-            pwm_log_last_duty = charger.duty;
-        }
-    }
-#endif
 }
 
 ChargerState charger_get_state(void) {
@@ -449,29 +386,6 @@ static void charger_apply_pwm(float duty_counts) {
 }
 
 // Logging disabled (JSON telemetry supersedes UART prints)
-static void __attribute__((unused)) charger_log(const char *fmt, ...) {
-    (void)fmt;
-}
-
-static const char *__attribute__((unused)) charger_state_to_string(ChargerState state) {
-    switch (state) {
-        case CHARGER_STATE_IDLE:
-            return "IDLE";
-        case CHARGER_STATE_CC:
-            return "CC";
-        case CHARGER_STATE_CV:
-            return "CV";
-        case CHARGER_STATE_COMPLETE:
-            return "COMPLETE";
-        case CHARGER_STATE_FAULT:
-            return "FAULT";
-        case CHARGER_STATE_STORAGE:
-            return "STORAGE";
-        default:
-            return "UNKNOWN";
-    }
-}
-
 static void charger_log_state_change(ChargerState prev_state, ChargerState new_state, const char *reason) {
     if (prev_state == new_state) {
         return;
@@ -479,33 +393,10 @@ static void charger_log_state_change(ChargerState prev_state, ChargerState new_s
     (void)reason;
 }
 
-// Charging mode balance (lighter balancing to avoid disrupting charge current)
-#define CHARGING_BALANCE_KP           300.0f   // Lighter gain for charging
-#define CHARGING_BALANCE_DEADBAND_V   0.050f  // Wider deadband during charging
-#define CHARGING_BALANCE_MAX_DUTY     40U     // Lower max duty during charge
-
 #define STORAGE_BALANCE_KP           150.0f
 #define STORAGE_BALANCE_DEADBAND_V    0.030f   // ignore deltas below 6 mV
 #define STORAGE_BALANCE_MAX_DUTY      95U
 #define STORAGE_CELL_TARGET_V         3.70f
-
-static uint8_t charge_compute_duty(float delta_v) {
-    if (delta_v <= 0.0f) {
-        return 0U;
-    }
-    float duty = delta_v * CHARGING_BALANCE_KP;
-    if (duty > (float)CHARGING_BALANCE_MAX_DUTY) {
-        duty = (float)CHARGING_BALANCE_MAX_DUTY;
-    }
-    if (duty < 0.0f) {
-        duty = 0.0f;
-    }
-    uint8_t duty_u8 = (uint8_t)duty;
-    if (duty_u8 == 0U && duty > 0.0f) {
-        duty_u8 = 1U;
-    }
-    return duty_u8;
-}
 
 static uint8_t storage_compute_duty(float delta_v) {
     if (delta_v <= 0.0f) {
@@ -523,45 +414,6 @@ static uint8_t storage_compute_duty(float delta_v) {
         duty_u8 = 1U;
     }
     return duty_u8;
-}
-
-static void __attribute__((unused)) charger_charging_balance_update(const VoltageValues *meas) {
-    if (meas == NULL) {
-        balance_disable_all_cells();
-        return;
-    }
-
-    const uint8_t cell_count = 6U;
-    float lowest = meas->cell[0];
-    float highest = meas->cell[0];
-    for (uint8_t i = 1; i < cell_count; ++i) {
-        if (meas->cell[i] < lowest) {
-            lowest = meas->cell[i];
-        }
-        if (meas->cell[i] > highest) {
-            highest = meas->cell[i];
-        }
-    }
-
-    // If cells are already even, make sure all bleed paths are off.
-    if ((highest - lowest) < CHARGING_BALANCE_DEADBAND_V) {
-        balance_disable_all_cells();
-        return;
-    }
-
-    for (uint8_t i = 0; i < cell_count; ++i) {
-        float delta = meas->cell[i] - lowest;
-        if (delta <= CHARGING_BALANCE_DEADBAND_V) {
-            disable_cell_balance(i);
-            continue;
-        }
-        uint8_t duty = charge_compute_duty(delta - CHARGING_BALANCE_DEADBAND_V);
-        if (duty == 0U) {
-            disable_cell_balance(i);
-        } else {
-            enable_cell_balance(i, duty);
-        }
-    }
 }
 
 static void charger_storage_update(const VoltageValues *meas) {

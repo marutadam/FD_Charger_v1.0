@@ -67,11 +67,9 @@ typedef struct {
 void charger_controller_init(ChargerControllerCfg cfg);
 void charger_set_targets(float target_voltage, float target_current);
 void charger_enable(void);
-void charger_disable(void);
 void charger_disable_with_reason(const char *reason);
 void charger_update(const VoltageValues *meas);
 void charger_fault_clear_all(void);
-bool charger_fault_any(void);
 
 // Force charger into storage mode (uses current targets)
 void charger_enter_storage_mode(void);
@@ -86,7 +84,6 @@ void CalculateFanRPM(int measurement_time_ms);
 
 // Function prototypes
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max);
-float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt);
 
 // Fan RPM measurement variables defined in main.c
 extern volatile uint32_t fan_int_count;
