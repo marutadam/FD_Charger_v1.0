@@ -52,7 +52,6 @@ typedef struct CAN_Frame CAN_Frame;
 #include "param_types.h"
 #include "adc_mux.h" 
 #include "stm32f4xx_hal_gpio.h"
-#include "ws2812c.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

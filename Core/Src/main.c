@@ -33,7 +33,6 @@
 #include <stdlib.h>
 #include "battery_charge.h"
 #include "battery_balance.h"
-#include "ws2812c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -137,8 +136,7 @@ VoltageValues current_battery_voltages = {
   .battery_voltage = 0.0f,
   .shunt_voltage = 0.0f,
   .buck_voltage = 0.0f,
-  .current = 0.0f,
-  .current_raw = 0
+  .current = 0.0f
 };
 #define CMD_MAX_LEN 64
 
@@ -161,7 +159,6 @@ VoltageValues current_battery_voltages = {
   HAL_UART_Transmit(&huart1, (uint8_t*)buffer, len, HAL_MAX_DELAY);
 }
 static void start_pwm_or_error(TIM_HandleTypeDef *htim, uint32_t channel);
-uint8_t Flash_Read_CAN_ID(void);
 
 // Helper function to safely disable all PWM outputs
 static inline void disable_all_pwm(void)
