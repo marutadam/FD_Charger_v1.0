@@ -22,8 +22,6 @@ extern TIM_HandleTypeDef htim4;
  * Balance a single cell if it sits above the pack's lowest voltage plus a deadband.
  * The deadband parameter defines how far above the lowest cell we allow the others.
  */
-void balance_cell(uint8_t cell_index, float *cell_voltages, float deadband);
-
 /**
  * Balance every cell by first finding the lowest voltage cell and then
  * bleeding any higher cells down toward (lowest + deadband).
