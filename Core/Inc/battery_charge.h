@@ -49,6 +49,11 @@ typedef struct {
     bool unknown;
 } ChargerFaultStatus;
 
+typedef enum {
+    CHARGER_CTRL_HYSTERESIS = 0,
+    CHARGER_CTRL_PI = 1
+} ChargerControlMode;
+
 typedef struct {
     float current_kp;            // proportional gain for current loop
     float current_ki;            // integral gain for current loop
@@ -62,6 +67,7 @@ typedef struct {
     uint16_t termination_hold_ms;// time below termination current before finish
     float cell_overvoltage_limit;// fault if any cell exceeds this voltage
     uint16_t update_period_ms;   // nominal control update period
+    ChargerControlMode control_mode; // select PI or hysteresis control
 } ChargerControllerCfg;
 
 void charger_controller_init(ChargerControllerCfg cfg);
@@ -84,6 +90,7 @@ void CalculateFanRPM(int measurement_time_ms);
 
 // Function prototypes
 void pi_controller_init(PI_Controller *controller, float kp, float ki, float integral_limit, float output_min, float output_max);
+float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt);
 
 // Fan RPM measurement variables defined in main.c
 extern volatile uint32_t fan_int_count;

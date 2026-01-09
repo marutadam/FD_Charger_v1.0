@@ -58,6 +58,30 @@ void pi_controller_init(PI_Controller *controller, float kp, float ki, float int
     controller->output_max = output_max;
 }
 
+float pi_controller_update(PI_Controller *controller, float setpoint, float measurement, float dt) {
+    float error = setpoint - measurement;
+
+    // Integral term with anti-windup
+    controller->integral += error * dt;
+    if (controller->integral > controller->integral_limit) {
+        controller->integral = controller->integral_limit;
+    } else if (controller->integral < -controller->integral_limit) {
+        controller->integral = -controller->integral_limit;
+    }
+
+    // PI controller output
+    float output = (controller->kp * error) + (controller->ki * controller->integral);
+
+    // Clamp output
+    if (output > controller->output_max) {
+        output = controller->output_max;
+    } else if (output < controller->output_min) {
+        output = controller->output_min;
+    }
+
+    return output;
+}
+
 void charger_fault_clear_all(void) {
     charger_faults.overvoltage = false;
     charger_faults.overcurrent = false;
@@ -209,11 +233,11 @@ void charger_update(const VoltageValues *meas) {
         }
     }
 
-    // --- VERY SIMPLE HYSTERESIS CONTROL ---
-    const float DUTY_STEP = 0.25f;       // Very small steps for ultra-smooth control
-    const float RAMP_UP_STEP = 40.0f;    // Large step for initial fast ramp-up
-    const float VOLTAGE_SLOW_GAP = 0.25f; // Slow ramp when buck almost equals battery
-    const float VOLTAGE_MED_GAP  = 1.0f;  // Medium ramp threshold
+    // --- FAST RAMP TO OPERATING POINT, THEN 1-COUNT STEPS ---
+    const float DUTY_STEP_SLOW = 1.0f;    // 1 count per update near operating point
+    const float DUTY_STEP_FAST = 40.0f;   // fast ramp-up before reaching target
+    const float CURRENT_WINDOW = 0.5f;   // "operating point" window around target current
+    const float dt_s = (float)elapsed_ms / 1000.0f;
     
     // Exponential moving average filter for current (reduce measurement noise)
     const float CURRENT_FILTER_ALPHA = 0.3f;  // 0.3 = heavy filtering
@@ -237,65 +261,63 @@ void charger_update(const VoltageValues *meas) {
 
     switch (charger.state) {
         case CHARGER_STATE_CC:
-            // Drive based on how far buck voltage is above the battery.
-            {
-                float voltage_gap = meas->buck_voltage - meas->battery_voltage;
-                float step = DUTY_STEP;  // Default to slow step
-
-                // Base step from voltage gap to avoid buck saturation
-                if (voltage_gap > VOLTAGE_MED_GAP) {
-                    step = RAMP_UP_STEP;  // Large gap -> fast ramp (40.0f)
-                } else if (voltage_gap > VOLTAGE_SLOW_GAP) {
-                    step = 5.0f * DUTY_STEP;  // Medium gap -> medium ramp (5.0f)
-                }
-                // else: small gap (<= 0.25V) -> use DUTY_STEP (0.25f)
-
-                // Scale step up when far from target current (faster approach),
-                // keep fine steps only when close to target
-                float current_error_abs = fabsf(charger.target_current - current);
-                float step_scale = 1.0f;
-                if (current_error_abs > 1.5f) {
-                    step_scale = 4.0f;   // very far -> much faster
-                } else if (current_error_abs > 0.8f) {
-                    step_scale = 2.0f;   // far -> faster
-                } else if (current_error_abs < 0.5f && step > DUTY_STEP) {
-                    step = DUTY_STEP;    // near target -> fine adjustments only
-                }
-                step *= step_scale;
+            if (charger.cfg.control_mode == CHARGER_CTRL_PI) {
+                charger.duty = pi_controller_update(&charger.current_pi,
+                                                    charger.target_current,
+                                                    current,
+                                                    dt_s);
+            } else {
+                // Drive based on how far buck voltage is above the battery.
+                float current_error = charger.target_current - current;
+                float current_error_abs = fabsf(current_error);
+                uint8_t at_operating_point = (current_error_abs <= CURRENT_WINDOW);
 
                 // One-way: exit fast mode after initial convergence
-                float current_error = fabsf(meas->current - charger.target_current);
-                if (charger.fast_mode && current_error < 0.5f) {
+                if (charger.fast_mode && at_operating_point) {
                     charger.fast_mode = 0;
                 }
-                // Use wider hysteresis to reduce oscillations (±0.8A deadband)
-                if(current < charger.target_current - 0.8f) {
-                charger.duty += step;
+
+                // Fast ramp only while below target and before operating point
+                if (current < charger.target_current - CURRENT_WINDOW) {
+                    charger.duty += at_operating_point ? DUTY_STEP_SLOW : DUTY_STEP_FAST;
                 }
-                if(current > charger.target_current + 0.8f) {
-                    charger.duty -= DUTY_STEP;
-                                // Reduce duty if any cell overvoltage detected
-                                if (cell_overvoltage_detected) {
-                                    charger.duty -= DUTY_STEP;  // Softer reduction to avoid oscillation
-                                }
+
+                // Once at/above target, only adjust by 1 count per update
+                if (current > charger.target_current + CURRENT_WINDOW) {
+                    charger.duty -= DUTY_STEP_SLOW;
+                    // Reduce duty if any cell overvoltage detected
+                    if (cell_overvoltage_detected) {
+                        charger.duty -= DUTY_STEP_SLOW;
+                    }
                 }
             }
             break;
 
         case CHARGER_STATE_CV:
-            // In CV mode, adjust PWM to meet target_voltage
-            if (meas->battery_voltage < charger.target_voltage) {
-                charger.duty += DUTY_STEP;
-            } else if (meas->battery_voltage > charger.target_voltage+0.2f) {
-                charger.duty -= DUTY_STEP;
-            }
-            // Additionally, ensure we don't exceed the target current as a safety measure
-            if (meas->current > charger.target_current+0.4f) {
-                            // Reduce duty if any cell overvoltage detected
-                            if (cell_overvoltage_detected) {
-                                charger.duty -= DUTY_STEP;  // Softer reduction to avoid oscillation
-                            }
-                charger.duty -= DUTY_STEP;
+            if (charger.cfg.control_mode == CHARGER_CTRL_PI) {
+                charger.duty = pi_controller_update(&charger.voltage_pi,
+                                                    charger.target_voltage,
+                                                    meas->battery_voltage,
+                                                    dt_s);
+                // Safety: back off if current exceeds target
+                if (meas->current > charger.target_current + 0.4f) {
+                    charger.duty -= DUTY_STEP_SLOW;
+                }
+            } else {
+                // In CV mode, adjust PWM to meet target_voltage
+                if (meas->battery_voltage < charger.target_voltage) {
+                    charger.duty += DUTY_STEP_SLOW;
+                } else if (meas->battery_voltage > charger.target_voltage+0.2f) {
+                    charger.duty -= DUTY_STEP_SLOW;
+                }
+                // Additionally, ensure we don't exceed the target current as a safety measure
+                if (meas->current > charger.target_current+0.4f) {
+                    // Reduce duty if any cell overvoltage detected
+                    if (cell_overvoltage_detected) {
+                        charger.duty -= DUTY_STEP_SLOW;  // Softer reduction to avoid oscillation
+                    }
+                    charger.duty -= DUTY_STEP_SLOW;
+                }
             }
             break;
 
