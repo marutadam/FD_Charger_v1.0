@@ -6,7 +6,7 @@
 // Lower alpha = more smoothing (more stable but slower response)
 // Higher alpha = less smoothing (faster response but noisier)
 #define VOLTAGE_FILTER_ALPHA 0.1f  // 0.0 - 1.0
-#define CURRENT_FILTER_ALPHA 0.35f // Smoother filter for current
+#define CURRENT_FILTER_ALPHA 0.15f // Smoother filter for current
 
 // Filtered measurement values buffer
 static VoltageValues filtered_voltages = {0};
@@ -19,11 +19,6 @@ static float apply_ema_filter(float new_value, float previous_filtered, float al
     return (alpha * new_value) + ((1.0f - alpha) * previous_filtered);
 }
 
-#define ADS1115_ADDR 0x48 // Default I2C address
-#define ADS1115_ADDR_2 0x49 // Second I2C address
-#define ADS1115_ADDR_3 0x4A // Default I2C address
-
-#define PARALLEL(r1, r2) (1.0f / (((1.0f) / (r1)) + ((1.0f) / (r2))))
 #define DIVIDER_SCALE(rt, rb) (((rt) + (rb)) / (rb))
 
 // Voltage divider scaling factors (top resistor, bottom resistor) per schematic.
@@ -47,7 +42,6 @@ static const float cell_calibration_gain[6] = {
 // AIN1 (buck) and AIN0/AIN2 (current sense high & battery) all use 91k/10k dividers
 static const float buck_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float battery_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
-static const float current_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 static const float shunt_divider_scale = DIVIDER_SCALE(91000.0f, 10000.0f);
 
 static const float battery_calibration_gain = 0.99349f;
@@ -165,34 +159,6 @@ static float calculateCurrent(float shunt_voltage, float battery_voltage)
     return (current < 0.0f) ? 0.0f : current;
 }
 
-static float __attribute__((unused)) readCurrent(I2C_HandleTypeDef *hi2c,
-                         float battery_voltage,
-                         float buck_voltage,
-                         int16_t battery_raw,
-                         int16_t *raw_current_out)
-{
-    const ADS1115_PGA current_pga = ADS1115_PGA_4V096;
-    ADS1115_ChannelConfig cfg_shunt_plus = get_ads1115_config(SHUNT_PLUS_VOLTAGE);
-    int16_t raw_current = ads1115_read_voltage(hi2c, cfg_shunt_plus.i2c_addr, cfg_shunt_plus.channel, current_pga);
-    if (buck_voltage < battery_voltage) {
-        if (raw_current_out != NULL) {
-            *raw_current_out = 0;
-        }
-        return 0.0f;
-    }
-    float current_high_voltage = ads1115_raw_to_voltage(raw_current, current_pga);
-    float battery_voltage_sense = ads1115_raw_to_voltage(battery_raw, ADS1115_PGA_4V096);
-    float current_high_actual = current_high_voltage * current_divider_scale;
-    float battery_actual = battery_voltage_sense * battery_divider_scale;
-    float shunt_voltage = current_high_actual - battery_actual;
-    if (raw_current_out != NULL) {
-        *raw_current_out = raw_current - battery_raw;
-    }
-    float shunt_resistance = 0.025f; // Effective shunt resistance (4x 0.1 ohm in parallel)
-    float current_voltage = shunt_voltage;
-    return (current_voltage / shunt_resistance) * current_calibration_gain;
-}
-
 VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
 {
     VoltageValues values;
@@ -237,8 +203,5 @@ VoltageValues ads1115_read_all_voltages(I2C_HandleTypeDef *hi2c)
     for (int i = 0; i < 6; ++i) {
         filtered_voltages.cell_raw[i] = values.cell_raw[i];
     }
-    filtered_voltages.current_raw = values.current_raw;
-    
     return filtered_voltages;
 }
-

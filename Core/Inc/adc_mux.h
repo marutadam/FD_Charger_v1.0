@@ -28,7 +28,6 @@ typedef enum {
     SHUNT_PLUS_VOLTAGE = 0,     // ADS1115_ADDR (0x48), AIN0
     BUCK_VOLTAGE = 1,           // ADS1115_ADDR (0x48), AIN1
     SHUNT_MINUS_VOLTAGE = 2,    // ADS1115_ADDR (0x48), AIN2
-    VIN_36V = 3,                // ADS1115_ADDR (0x48), AIN3
     
     // ADS1115_ADDR_2 (0x49)
     CELL_1_VOLTAGE = 4,         // ADS1115_ADDR_2 (0x49), AIN0
@@ -54,9 +53,6 @@ static inline ADS1115_ChannelConfig get_ads1115_config(ADS1115_VoltageChannel ch
             break;
         case SHUNT_MINUS_VOLTAGE:
             cfg.i2c_addr = 0x48; cfg.channel = 2; cfg.name = "SHUNT_MINUS";
-            break;
-        case VIN_36V:
-            cfg.i2c_addr = 0x48; cfg.channel = 3; cfg.name = "VIN_36V";
             break;
         case CELL_1_VOLTAGE:
             cfg.i2c_addr = 0x49; cfg.channel = 0; cfg.name = "CELL_1";
