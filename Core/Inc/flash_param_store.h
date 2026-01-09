@@ -20,7 +20,6 @@ void ParamStore_Save_CAN_ID(uint8_t id);
 uint8_t ParamStore_Read_CAN_ID(void);
 FlashParams ReadAllParams(void);
 void SaveAllParams(FlashParams params);
-void SaveBalanceConfig(FlashParams params);
 void PrintAllParamsToUART(void);
 // Add more save/read functions for other parameters
 

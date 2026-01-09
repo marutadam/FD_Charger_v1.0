@@ -20,7 +20,6 @@ typedef struct {
     float shunt_voltage;   // Shunt voltage
     float buck_voltage;    // BUCK converter voltage
     float current;         // Battery current
-    int16_t current_raw;   // raw ADC code for current channel
 } VoltageValues;
 
 typedef struct {
