@@ -40,6 +40,9 @@ typedef struct {
     uint32_t termination_timer;
     uint8_t fast_mode;  // 1 = fast loop (50ms), 0 = slow loop (300ms)
     float filtered_current;  // EMA filtered current for smooth control
+    bool initial_ramp_complete;
+    uint32_t initial_ramp_ms;
+    float initial_ramp_min_counts;
 } ChargerController;
 
 static ChargerController charger = {0};
@@ -158,10 +161,30 @@ void charger_enable(void) {
     }
     charger.enabled = 1;
     charger.state = CHARGER_STATE_CC;
-    charger.duty = 250.0f;  // Start from 250 counts for faster initial ramp
-        charger.fast_mode = 1;  // Start in fast mode for quick ramp-up
-        charger.filtered_current = 0.0f;  // Reset filtered current
-    charger.current_pi.integral = 0.0f;
+    charger.duty = 350.0f;  // Start from 350 counts for faster initial ramp
+    charger.fast_mode = 1;  // Start in fast mode for quick ramp-up
+    charger.filtered_current = 0.0f;  // Reset filtered current
+    charger.initial_ramp_complete = false;
+    charger.initial_ramp_ms = 0;
+    charger.initial_ramp_min_counts = charger.duty_min_counts;
+    if (charger.duty_min_counts < 350.0f) {
+        charger.duty_min_counts = 350.0f;
+        charger.current_pi.output_min = charger.duty_min_counts;
+        charger.voltage_pi.output_min = charger.duty_min_counts;
+    }
+    if (charger.current_pi.ki != 0.0f) {
+        float desired_output = charger.duty;
+        float error = charger.target_current - charger.filtered_current;
+        float integral = (desired_output - (charger.current_pi.kp * error)) / charger.current_pi.ki;
+        if (integral > charger.current_pi.integral_limit) {
+            integral = charger.current_pi.integral_limit;
+        } else if (integral < -charger.current_pi.integral_limit) {
+            integral = -charger.current_pi.integral_limit;
+        }
+        charger.current_pi.integral = integral;
+    } else {
+        charger.current_pi.integral = 0.0f;
+    }
     charger.voltage_pi.integral = 0.0f;
     charger.last_tick = HAL_GetTick();
     charger.termination_timer = 0;
@@ -261,6 +284,18 @@ void charger_update(const VoltageValues *meas) {
 
     switch (charger.state) {
         case CHARGER_STATE_CC:
+            if (!charger.initial_ramp_complete) {
+                const uint32_t INITIAL_RAMP_HOLD_MS = 500U;
+                charger.duty = 350.0f;
+                charger.initial_ramp_ms += elapsed_ms;
+                if (charger.initial_ramp_ms >= INITIAL_RAMP_HOLD_MS) {
+                    charger.initial_ramp_complete = true;
+                    charger.duty_min_counts = charger.initial_ramp_min_counts;
+                    charger.current_pi.output_min = charger.duty_min_counts;
+                    charger.voltage_pi.output_min = charger.duty_min_counts;
+                }
+                break;
+            }
             if (charger.cfg.control_mode == CHARGER_CTRL_PI) {
                 charger.duty = pi_controller_update(&charger.current_pi,
                                                     charger.target_current,
@@ -278,8 +313,11 @@ void charger_update(const VoltageValues *meas) {
                 }
 
                 // Fast ramp only while below target and before operating point
-                if (current < charger.target_current - CURRENT_WINDOW) {
+                if (current < charger.target_current - CURRENT_WINDOW && charger.duty< 400.0f) {
                     charger.duty += at_operating_point ? DUTY_STEP_SLOW : DUTY_STEP_FAST;
+                }
+                  if (current < charger.target_current - CURRENT_WINDOW) {
+                    charger.duty += DUTY_STEP_SLOW ;
                 }
 
                 // Once at/above target, only adjust by 1 count per update
