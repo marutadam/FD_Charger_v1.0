@@ -155,6 +155,9 @@ static float calculateCurrent(float shunt_voltage, float battery_voltage)
 {
     float shunt_resistance = 0.025f; // Effective shunt resistance (4x 0.1 ohm in parallel)
     float current_voltage = shunt_voltage-battery_voltage;
+    if (battery_voltage > shunt_voltage) {
+        return 0.0f; // No negative current
+    }
     float current = (current_voltage / shunt_resistance) * current_calibration_gain;
     return (current < 0.0f) ? 0.0f : current;
 }
