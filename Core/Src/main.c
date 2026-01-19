@@ -319,7 +319,7 @@ static void uart_send_status_json(void)
 static inline void uart_send_status_json(void) {(void)0;}
 #endif
 
-volatile uint8_t CAN_ID = 0x71; // Default value, will be overwritten on startup
+volatile uint8_t CAN_ID = 0x75; // Default value, will be overwritten on startup
 
 /* USER CODE END PV */
 
@@ -484,7 +484,7 @@ if (DEBUG_INFO) {
 
   /* Create the queue(s) */
   /* creation of uartRxQueue */
-  uartRxQueueHandle = osMessageQueueNew (5, 20, &uartRxQueue_attributes);
+  uartRxQueueHandle = osMessageQueueNew(64, sizeof(uint8_t), &uartRxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -1092,48 +1092,47 @@ void UartTask(void *argument)
   HAL_UART_Transmit(&huart1, (uint8_t*)"[INIT] Telemetry disabled\r\n", 27, 100);
 #endif
 for (;;) {
-  // Use shorter timeout to allow periodic status JSON
-  if (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 50) == osOK) {
-        if ((c == '\r' || c == '\n')) {
-            if (!last_was_eol) {
-                cmd[idx] = '\0';
+  // Drain the queue quickly to avoid overflow at high baudrates
+  while (osMessageQueueGet(uartRxQueueHandle, &c, NULL, 0) == osOK) {
+    if ((c == '\r' || c == '\n')) {
+      if (!last_was_eol) {
+        cmd[idx] = '\0';
 
-                // Parse SETID command (accept SETID=0xNN or SETID=NN)
-                if (strncmp(cmd, "SETID=", 6) == 0) {
-                  long parsed = strtol(cmd + 6, NULL, 0); // base 0 accepts 0x/0X or decimal
-                  if (parsed < 0 || parsed > 0xFF) {
-                    const char *err = "[RESPONSE] Invalid CAN_ID (must be 0x00-0xFF)\r\n";
-                    HAL_UART_Transmit(&huart1, (uint8_t*)err, strlen(err), HAL_MAX_DELAY);
-                  } else {
-                    uint8_t new_id = (uint8_t)parsed;
-                    ParamStore_Save_CAN_ID(new_id);
-                    CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
-                    char msg[48];
-                    snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
-                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-                  }
-                }
-                // Parse GETID command
-                else if (strcmp(cmd, "GETID") == 0) {
-                    uint8_t current_id = ParamStore_Read_CAN_ID();
-                    PrintAllParamsToUART();
-                    char msg[32];
-                    snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID is 0x%02X\r\n", current_id);
-                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-                }
-                else {
-                    // Respond with error for unknown command
-                    const char *err_msg = "[RESPONSE] Unknown command\r\n";
-                    HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
-                }
-                idx = 0;
-                last_was_eol = 1;
-            }
-        } else if (idx < CMD_MAX_LEN - 1) {
-            cmd[idx++] = c;
-            last_was_eol = 0;
+        // Parse SETID command (accept SETID=0xNN or SETID=NN)
+        if (strncmp(cmd, "SETID=", 6) == 0) {
+          long parsed = strtol(cmd + 6, NULL, 0); // base 0 accepts 0x/0X or decimal
+          if (parsed < 0 || parsed > 0xFF) {
+            const char *err = "[RESPONSE] Invalid CAN_ID (must be 0x00-0xFF)\r\n";
+            HAL_UART_Transmit(&huart1, (uint8_t*)err, strlen(err), HAL_MAX_DELAY);
+          } else {
+            uint8_t new_id = (uint8_t)parsed;
+            ParamStore_Save_CAN_ID(new_id);
+            CAN_ID = ParamStore_Read_CAN_ID(); // update global CAN_ID
+            char msg[48];
+            snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID set to 0x%02X\r\n", CAN_ID);
+            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+          }
         }
+        // Parse GETID command
+        else if (strcmp(cmd, "GETID") == 0) {
+          uint8_t current_id = ParamStore_Read_CAN_ID();
+          PrintAllParamsToUART();
+          char msg[32];
+          snprintf(msg, sizeof(msg), "[RESPONSE] CAN_ID is 0x%02X\r\n", current_id);
+          HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+        } else {
+          // Respond with error for unknown command
+          const char *err_msg = "[RESPONSE] Unknown command\r\n";
+          HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, strlen(err_msg), HAL_MAX_DELAY);
+        }
+        idx = 0;
+        last_was_eol = 1;
+      }
+    } else if (idx < CMD_MAX_LEN - 1) {
+      cmd[idx++] = c;
+      last_was_eol = 0;
     }
+  }
     
     // Moved outside queue check - always runs even if no RX data
     uint32_t now = HAL_GetTick();
