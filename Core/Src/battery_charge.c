@@ -159,6 +159,19 @@ void charger_enable(void) {
     if (charger.target_current <= 0.0f || charger.target_voltage <= 0.0f) {
         return;
     }
+    if (charger.pwm_counts_max <= 0.0f) {
+        charger.pwm_counts_max = (float)__HAL_TIM_GET_AUTORELOAD(&htim2);
+        if (charger.pwm_counts_max <= 0.0f) {
+            charger.pwm_counts_max = 1.0f;
+        }
+    }
+    charger.duty_min_counts = (charger.cfg.duty_min / 100.0f) * charger.pwm_counts_max;
+    charger.duty_max_counts = (charger.cfg.duty_max / 100.0f) * charger.pwm_counts_max;
+    if (charger.duty_min_counts > charger.duty_max_counts) {
+        charger.duty_min_counts = charger.duty_max_counts;
+    }
+    charger.current_pi.output_min = charger.duty_min_counts;
+    charger.voltage_pi.output_min = charger.duty_min_counts;
     charger.enabled = 1;
     charger.state = CHARGER_STATE_CC;
     charger.duty = 350.0f;  // Start from 350 counts for faster initial ramp
@@ -241,15 +254,20 @@ void charger_update(const VoltageValues *meas) {
         meas->battery_voltage >= (charger.target_voltage - charger.cfg.voltage_hysteresis)) {
         charger.state = CHARGER_STATE_CV;
         state_change_reason = "voltage reached CV threshold";
+        // Don't reset controller or duty_min_counts - continue regulating to reduce current smoothly
     }
 
     // State transition: CV -> Complete
     if (charger.state == CHARGER_STATE_CV && charger.cfg.termination_current > 0.0f) {
-        if (meas->current <= charger.cfg.termination_current) {
-            charger.termination_timer += elapsed_ms;
-            if (charger.termination_timer >= charger.cfg.termination_hold_ms) {
-                charger.state = CHARGER_STATE_COMPLETE;
-                state_change_reason = "termination current sustained";
+        if (charger.cfg.control_mode != CHARGER_CTRL_PI) {
+            if (meas->current <= charger.cfg.termination_current) {
+                charger.termination_timer += elapsed_ms;
+                if (charger.termination_timer >= charger.cfg.termination_hold_ms) {
+                    charger.state = CHARGER_STATE_COMPLETE;
+                    state_change_reason = "termination current sustained";
+                }
+            } else {
+                charger.termination_timer = 0;
             }
         } else {
             charger.termination_timer = 0;
@@ -282,6 +300,12 @@ void charger_update(const VoltageValues *meas) {
         }
     }
 
+    // Input supply check: high PWM with low buck voltage indicates missing 36V input
+    if (charger.duty > 450.0f && meas->buck_voltage < 20.0f) {
+        charger_disable_with_reason("36V input error");
+        return;
+    }
+
     switch (charger.state) {
         case CHARGER_STATE_CC:
             if (!charger.initial_ramp_complete) {
@@ -290,9 +314,7 @@ void charger_update(const VoltageValues *meas) {
                 charger.initial_ramp_ms += elapsed_ms;
                 if (charger.initial_ramp_ms >= INITIAL_RAMP_HOLD_MS) {
                     charger.initial_ramp_complete = true;
-                    charger.duty_min_counts = charger.initial_ramp_min_counts;
-                    charger.current_pi.output_min = charger.duty_min_counts;
-                    charger.voltage_pi.output_min = charger.duty_min_counts;
+                    // Keep duty_min_counts at 350 - don't reset to original low value
                 }
                 break;
             }
@@ -331,33 +353,39 @@ void charger_update(const VoltageValues *meas) {
             }
             break;
 
-        case CHARGER_STATE_CV:
-            if (charger.cfg.control_mode == CHARGER_CTRL_PI) {
-                charger.duty = pi_controller_update(&charger.voltage_pi,
-                                                    charger.target_voltage,
-                                                    meas->battery_voltage,
-                                                    dt_s);
-                // Safety: back off if current exceeds target
-                if (meas->current > charger.target_current + 0.4f) {
-                    charger.duty -= DUTY_STEP_SLOW;
-                }
-            } else {
-                // In CV mode, adjust PWM to meet target_voltage
-                if (meas->battery_voltage < charger.target_voltage) {
+        case CHARGER_STATE_CV: {
+            // if (charger.cfg.control_mode == CHARGER_CTRL_PI) {
+            //     charger.duty = pi_controller_update(&charger.voltage_pi,
+            //                                         charger.target_voltage,
+            //                                         meas->battery_voltage,
+            //                                         dt_s);
+            //     // Safety: back off if current exceeds target
+            //     if (meas->current > charger.target_current + 0.4f) {
+            //         charger.duty -= DUTY_STEP_SLOW;
+            //     }
+            // } else {
+                // In CV mode, actively regulate to maintain constant voltage
+                float voltage_error = charger.target_voltage - meas->battery_voltage;
+                
+                if (voltage_error > 0.05f) {
+                    // Voltage too low - increase duty
                     charger.duty += DUTY_STEP_SLOW;
-                } else if (meas->battery_voltage > charger.target_voltage+0.2f) {
+                } else if (voltage_error < -0.05f) {
+                    // Voltage too high - decrease duty
                     charger.duty -= DUTY_STEP_SLOW;
                 }
+                
                 // Additionally, ensure we don't exceed the target current as a safety measure
                 if (meas->current > charger.target_current+0.4f) {
+                    charger.duty -= DUTY_STEP_SLOW;
                     // Reduce duty if any cell overvoltage detected
                     if (cell_overvoltage_detected) {
-                        charger.duty -= DUTY_STEP_SLOW;  // Softer reduction to avoid oscillation
+                        charger.duty -= DUTY_STEP_SLOW;
                     }
-                    charger.duty -= DUTY_STEP_SLOW;
                 }
-            }
+            //}
             break;
+        }
 
         case CHARGER_STATE_COMPLETE:
             charger_disable_with_reason("charge complete");
